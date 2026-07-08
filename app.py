@@ -120,7 +120,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록 (탭 보완 최적화 아키텍처)
+# [메뉴 1] 모바일 체크리스트 등록
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -158,24 +158,23 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
                 st.markdown("---")
             
-            # [요청 2 보완 완벽 해결] Streamlit 버전업에 따른 신형 탭 추적 자바스크립트 주입
-            # data-baseweb, role, class 명칭에 상관없이 '상단 탭 버튼 목록'을 강제 스캔하여 완벽 동기화 터치
+            # [버그 수정 완료] 사진 확대 버튼 오작동 원천 차단 (role="tablist" 내부의 탭만 정확히 조준)
             st.components.v1.html(f"""
             <script>
-            function nextTab() {{
-                const p = window.parent.document;
-                // 속성, 역할, 클래스 등 모든 패턴의 탭 엘리먼트를 스캔합니다.
-                let tabs = p.querySelectorAll('button[data-baseweb="tab"], button[role="tab"], .stTabs button');
-                if (!tabs || tabs.length === 0) {{
-                    // 최악의 경우 일반 버튼 중 텍스트가 일치하는 탭 탐색
-                    tabs = Array.from(p.querySelectorAll('button')).filter(b => b.id && b.id.includes('tab'));
-                }}
-                if (tabs && tabs.length > {idx} + 1) {{
-                    tabs[{idx} + 1].click();
+            function goToNextTab() {{
+                const doc = window.parent.document;
+                // 사진이나 다른 버튼은 무시하고 오직 최상단 '탭 리스트' 껍데기를 먼저 찾습니다.
+                const tablist = doc.querySelector('div[role="tablist"]');
+                if (tablist) {{
+                    // 그 안에서 진짜 탭 버튼들만 모아서 순서대로 배열합니다.
+                    const tabs = tablist.querySelectorAll('button[role="tab"]');
+                    if (tabs.length > {idx} + 1) {{
+                        tabs[{idx} + 1].click(); // 다음 순서의 탭을 완벽하게 클릭합니다.
+                    }}
                 }}
             }}
             </script>
-            <button onclick="nextTab()" style="width:100%; padding:14px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); font-family:sans-serif;">
+            <button onclick="goToNextTab()" style="width:100%; padding:14px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); font-family:sans-serif;">
                 다음 시트로 이동 ➡️
             </button>
             """, height=70)
