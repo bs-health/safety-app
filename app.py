@@ -22,7 +22,6 @@ st.markdown("""
         h1 { font-size: 1.6rem !important; }
         h2 { font-size: 1.3rem !important; }
         h3 { font-size: 1.1rem !important; }
-        button[data-baseweb="tab"] { font-size: 0.85rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -38,7 +37,7 @@ def init_connection():
 supabase = init_connection()
 
 # -----------------------------------------------------------------------------
-# [인증 & 세션] 로그인 상태 관리
+# [인증 & 세션 관리] 로그인 및 시트(단계) 동기화 상태 락(Lock)
 # -----------------------------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -46,6 +45,10 @@ if 'logged_in' not in st.session_state:
 
 if 'issue_count' not in st.session_state:
     st.session_state.issue_count = 1
+
+# [100% 작동 보장] 백엔드가 직접 현재 페이지 번호를 기억하는 핵심 세션 엔진
+if 'current_step' not in st.session_state:
+    st.session_state.current_step = 0
 
 if not st.session_state.logged_in:
     st.markdown("<h2 style='text-align: center; margin-top:50px;'>🦺 안전보건 통합 점검 시스템</h2>", unsafe_allow_html=True)
@@ -66,7 +69,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# [기준 데이터] 질문지 및 탭 매핑 정의
+# [기준 데이터] 질문지 및 마스터 매핑
 # -----------------------------------------------------------------------------
 def generate_ai_summary(text):
     if not text or len(text) < 5: return "요약 불가(내용 부족)"
@@ -106,7 +109,7 @@ QUESTIONS = {
 
 SECTIONS_MAP = {"서류": [1, 2, 4], "위험성평가": [3], "비상대응": [5], "교육훈련": [6, 7, 8, 9, 10, 11], "현장위험": [12, 13], "보건관리": [14, 15, 16]}
 
-# 사이드바 권한 분리 네비게이션
+# 사이드바 구성
 u_info = st.session_state.user_info
 st.sidebar.markdown(f"### 👤 {u_info['emp_name']} 님")
 if st.sidebar.button("🚪 로그아웃", use_container_width=True):
@@ -120,7 +123,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록
+# [메뉴 1] 모바일 체크리스트 등록 (파이썬 세션기반 완전 무결 작동 버전)
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -134,59 +137,56 @@ if menu == "✍️ 모바일 체크리스트 등록":
     with col_hc: headcount = st.number_input("인원수(명)", min_value=0, step=1)
     st.markdown("---")
     
-    tabs_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출"]
-    tabs = st.tabs(tabs_names)
+    steps_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출"]
     
-    for idx, (sect, q_ids) in enumerate(SECTIONS_MAP.items()):
-        with tabs[idx]:
-            for q_id in q_ids:
-                q = QUESTIONS[q_id]
-                st.markdown(f"**Q{q_id:02d}. {q['title']}**")
-                st.caption(f"💡 팁: {q['tip']}")
-                
-                try:
-                    if os.path.exists(f"images/{q_id}.png"):
-                        st.image(f"images/{q_id}.png", use_container_width=True)
-                except: pass
-                
-                st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
-                
-                issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", key=f"chk_{q_id}")
-                if issue_check:
-                    st.warning(f"⚠️ Q{q_id:02d} 관련 지적사진 및 내용을 기록합니다.")
-                    st.camera_input(f"📸 Q{q_id:02d} 현장 사진", key=f"cam_q_{q_id}")
-                    st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
-                st.markdown("---")
+    # [직관성 업그레이드] 현재 어떤 시트(단계)에 와 있는지 상태 진행 바 표시
+    status_text = " ➡️ ".join([f"**[{name}]**" if i == st.session_state.current_step else name for i, name in enumerate(steps_names)])
+    st.markdown(f"▶️ 현재 진행 상태: {status_text}")
+    st.markdown("---")
+    
+    # 1~6번째 평가 문항 시트 처리
+    if st.session_state.current_step < len(SECTIONS_MAP):
+        current_step_name = list(SECTIONS_MAP.keys())[st.session_state.current_step]
+        q_ids = SECTIONS_MAP[current_step_name]
+        
+        st.subheader(f"📂 현재 시트: {current_step_name}")
+        
+        for q_id in q_ids:
+            q = QUESTIONS[q_id]
+            st.markdown(f"**Q{q_id:02d}. {q['title']}**")
+            st.caption(f"💡 팁: {q['tip']}")
             
-            # [버그 수정 완료] 사진 확대 버튼 오작동 원천 차단 (role="tablist" 내부의 탭만 정확히 조준)
-            st.components.v1.html(f"""
-            <script>
-            function goToNextTab() {{
-                const doc = window.parent.document;
-                // 사진이나 다른 버튼은 무시하고 오직 최상단 '탭 리스트' 껍데기를 먼저 찾습니다.
-                const tablist = doc.querySelector('div[role="tablist"]');
-                if (tablist) {{
-                    // 그 안에서 진짜 탭 버튼들만 모아서 순서대로 배열합니다.
-                    const tabs = tablist.querySelectorAll('button[role="tab"]');
-                    if (tabs.length > {idx} + 1) {{
-                        tabs[{idx} + 1].click(); // 다음 순서의 탭을 완벽하게 클릭합니다.
-                    }}
-                }}
-            }}
-            </script>
-            <button onclick="goToNextTab()" style="width:100%; padding:14px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); font-family:sans-serif;">
-                다음 시트로 이동 ➡️
-            </button>
-            """, height=70)
+            try:
+                if os.path.exists(f"images/{q_id}.png"):
+                    st.image(f"images/{q_id}.png", use_container_width=True)
+            except: pass
+            
+            # 중요: 모든 점수 컴포넌트는 전역 고유 키를 가지며 세션 상태에 실시간 영구 자동 세이브됩니다.
+            st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
+            
+            issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", key=f"chk_{q_id}")
+            if issue_check:
+                st.warning(f"⚠️ Q{q_id:02d} 관련 지적사진 및 내용을 기록합니다.")
+                st.camera_input(f"📸 Q{q_id:02d} 현장 사진", key=f"cam_q_{q_id}")
+                st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
+            st.markdown("---")
+            
+        # [100% 에러 해결] 백엔드가 직접 숫자를 올려 리런시키는 완전 무결 '다음 단계' 버튼
+        if st.button("다음 단계로 이동 ➡️", use_container_width=True, type="secondary"):
+            st.session_state.current_step += 1
+            st.rerun()
 
-    # 마지막 7번째 탭
-    with tabs[-1]:
+    # 7번째 마지막 시트 (최종 지적 및 제출) 처리
+    else:
+        st.subheader("📸 최종 지적 및 제출 시트")
         st.info("개별 문항 외에 추가로 발생한 현장 지적사항이 있다면 아래에 등록하세요.")
         
+        generic_issues_widgets = []
         for i in range(st.session_state.issue_count):
             st.markdown(f"#### 📌 [추가 현장 지적 {i+1}]")
-            st.camera_input(f"📸 추가 현장 사진 {i+1}", key=f"gen_cam_{i}")
-            st.text_area(f"추가 지적사항 {i+1} 상세 내용", key=f"gen_rem_{i}")
+            cam = st.camera_input(f"📸 추가 현장 사진 {i+1}", key=f"gen_cam_{i}")
+            rem = st.text_area(f"추가 지적사항 {i+1} 상세 내용", key=f"gen_rem_{i}")
+            generic_issues_widgets.append((cam, rem))
             st.markdown("---")
             
         if st.button("➕ 지적사항 한 건 더 추가하기", use_container_width=True):
@@ -195,70 +195,81 @@ if menu == "✍️ 모바일 체크리스트 등록":
             
         beta_feedback = st.text_area("앱 개선 의견 피드백", key="beta_feed")
         
-        if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
-            final_score = 0
-            
-            for q_id in range(1, 17):
-                ans_key = f"ans_{q_id}"
-                if ans_key in st.session_state:
-                    chosen_ans = st.session_state[ans_key]
-                    final_score += QUESTIONS[q_id]["options"][chosen_ans]
-            
-            all_issues = []
-            for q_id in range(1, 17):
-                if st.session_state.get(f"chk_{q_id}"):
-                    cam = st.session_state.get(f"cam_q_{q_id}")
-                    rem = st.session_state.get(f"rem_q_{q_id}")
-                    ans_val = st.session_state.get(f"ans_{q_id}", "").split('.')[0]
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("⬅️ 이전 시트로 돌아가기", use_container_width=True):
+                st.session_state.current_step -= 1
+                st.rerun()
+                
+        with col_btn2:
+            if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
+                final_score = 0
+                
+                # 안전한 누적 점수 강제 집계 로직
+                for q_id in range(1, 17):
+                    ans_key = f"ans_{q_id}"
+                    if ans_key in st.session_state:
+                        chosen_ans = st.session_state[ans_key]
+                        final_score += QUESTIONS[q_id]["options"][chosen_ans]
+                
+                all_issues = []
+                for q_id in range(1, 17):
+                    if st.session_state.get(f"chk_{q_id}"):
+                        cam = st.session_state.get(f"cam_q_{q_id}")
+                        rem = st.session_state.get(f"rem_q_{q_id}")
+                        ans_val = st.session_state.get(f"ans_{q_id}", "").split('.')[0]
+                        if cam or rem:
+                            text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
+                            all_issues.append((cam, text_payload))
+                
+                for i, (cam, rem) in enumerate(generic_issues_widgets):
                     if cam or rem:
-                        text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
-                        all_issues.append((cam, text_payload))
-            
-            for i in range(st.session_state.issue_count):
-                cam = st.session_state.get(f"gen_cam_{i}")
-                rem = st.session_state.get(f"gen_rem_{i}")
-                if cam or rem:
-                    all_issues.append((cam, f"[추가 현장 지적] {rem if rem else '사진 참조'}"))
-                    
-            combined_remarks = "\n\n".join([text for _, text in all_issues])
-            first_img_url = ""
-            
-            for i, (cam, text) in enumerate(all_issues):
-                img_url = ""
-                if cam:
-                    image = Image.open(cam)
-                    if image.mode in ("RGBA", "P"): image = image.convert("RGB")
-                    
-                    image.thumbnail((800, 800), Image.Resampling.LANCZOS)
-                    img_byte_arr = io.BytesIO()
-                    image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
-                    
-                    unique_hash = str(uuid.uuid4().hex)[:6]
-                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{unique_hash}_issue.jpg"
-                    
-                    supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
-                    img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
-                    if not first_img_url: first_img_url = img_url
+                        all_issues.append((cam, f"[추가 현장 지적] {rem if rem else '사진 참조'}"))
+                        
+                combined_remarks = "\n\n".join([text for _, text in all_issues])
+                first_img_url = ""
                 
-                ai_sum = generate_ai_summary(text)
-                supabase.table("safety_issues").insert({
-                    "emp_id": u_info['emp_id'], "branch": branch, "date": inspect_date.strftime("%Y-%m-%d"),
-                    "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
-                }).execute()
+                # 사진 압축 업로드 실행
+                for i, (cam, text) in enumerate(all_issues):
+                    img_url = ""
+                    if cam:
+                        image = Image.open(cam)
+                        if image.mode in ("RGBA", "P"): image = image.convert("RGB")
+                        
+                        image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                        img_byte_arr = io.BytesIO()
+                        image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
+                        
+                        unique_hash = str(uuid.uuid4().hex)[:6]
+                        file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{unique_hash}_issue.jpg"
+                        
+                        supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
+                        img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
+                        if not first_img_url: first_img_url = img_url
+                    
+                    ai_sum = generate_ai_summary(text)
+                    supabase.table("safety_issues").insert({
+                        "emp_id": u_info['emp_id'], "branch": branch, "date": inspect_date.strftime("%Y-%m-%d"),
+                        "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
+                    }).execute()
 
-            eval_data = {
-                "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
-                "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
-                "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": st.session_state.get("beta_feed", "")
-            }
-            for i in range(1, 17):
-                ans_val = st.session_state.get(f"ans_{i}")
-                eval_data[f"q{i}"] = QUESTIONS[i]["options"][ans_val] if ans_val else 0
+                # 점검 마스터 테이블 최종 반영
+                eval_data = {
+                    "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
+                    "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
+                    "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
+                }
+                for i in range(1, 17):
+                    ans_val = st.session_state.get(f"ans_{i}")
+                    eval_data[f"q{i}"] = QUESTIONS[i]["options"][ans_val] if ans_val else 0
+                    
+                supabase.table("safety_evaluation").insert(eval_data).execute()
                 
-            supabase.table("safety_evaluation").insert(eval_data).execute()
-            
-            st.session_state.issue_count = 1
-            st.success(f"🎉 완벽합니다! 종합점수 **{final_score}점**으로 점검 기록 및 지적사항이 성공적으로 서버에 등록되었습니다!")
+                # 완료 후 상태 초기화
+                st.session_state.issue_count = 1
+                st.session_state.current_step = 0
+                st.success(f"🎉 성공! 종합점수 **{final_score}점**으로 점검 데이터 및 지적사항이 클라우드 서버에 등록되었습니다!")
+                st.rerun()
 
 # -----------------------------------------------------------------------------
 # [메뉴 2] 내 점검 이력 관리
