@@ -147,7 +147,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
     st.markdown(f"▶️ 현재 진행 상태: {status_text}")
     st.markdown("---")
     
-    # 1~6번째 평가 문항 시트 처리
     if st.session_state.current_step < len(SECTIONS_MAP):
         current_step_name = list(SECTIONS_MAP.keys())[st.session_state.current_step]
         q_ids = SECTIONS_MAP[current_step_name]
@@ -212,7 +211,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 st.session_state.current_step += 1
                 st.rerun()
 
-    # 7번째 마지막 시트
     else:
         st.subheader("📸 최종 지적 및 제출 시트")
         st.info("개별 문항 외에 추가로 발생한 현장 지적사항이 있다면 아래에 등록하세요.")
@@ -474,12 +472,11 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.dataframe(df[df['feedback'].notna() & (df['feedback'] != "")][['date', 'inspector', 'branch', 'feedback']], use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# [메뉴 5] 1페이지 요약 및 PDF 출력 (★다중 사진 및 지적항목 명시 UI 고도화 반영)
+# [메뉴 5] 1페이지 요약 및 PDF 출력 (HTML 내보내기 버튼 추가 완벽 연동)
 # -----------------------------------------------------------------------------
 elif menu == "🖨️ 1페이지 요약 PDF 출력":
     st.title("🖨️ 안전점검결과 보고서 요약본")
     
-    # 평가 마스터 및 지적사항 데이터를 동시에 호출
     df = pd.DataFrame(supabase.table("safety_evaluation").select("*").execute().data)
     df_issues = pd.DataFrame(supabase.table("safety_issues").select("*").execute().data)
     
@@ -508,9 +505,10 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         fig_radar.add_trace(ob.Scatterpolar(r=s_avgs, theta=s_names, fill='toself', name='전사 평균'))
         fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), template="plotly_white", height=380)
         
-        col_rep1, col_rep2 = st.columns([1.5, 1])
-        with col_rep1:
-            st.markdown(f"""
+        # -------------------------------------------------------------------------
+        # [신규 기능] HTML 파일 렌더링 및 내보내기 버튼 로직 생성
+        # -------------------------------------------------------------------------
+        html_report_body = f"""
 <div style="border: 2px solid #333; padding: 20px; font-family: sans-serif; background-color:#fff; color:#111; border-radius: 8px;">
 <h2 style="text-align: center; margin-bottom: 20px; text-decoration: underline;">안전보건 점검 결과서</h2>
 <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; border: 1px solid #333;">
@@ -522,42 +520,97 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
 <div style="flex: 1; border: 1px solid #e74c3c; padding: 12px; border-radius: 6px; background-color: #fdedec;"><h5 style="margin: 0 0 8px 0; color: #c0392b;">🔴 취약 항목</h5><p style="font-size: 12px; margin:0;">{"<br>".join(bad_items) if bad_items else "없음"}</p></div>
 </div>
 </div>
-""", unsafe_allow_html=True)
+        """
+        
+        radar_html = fig_radar.to_html(full_html=False, include_plotlyjs='cdn')
+        
+        report_issues = df_issues[(df_issues['date'] == doc_data['date']) & 
+                                  (df_issues['branch'] == doc_data['branch']) & 
+                                  (df_issues['emp_id'] == doc_data['emp_id'])]
+        issues_with_imgs = report_issues[report_issues['image_url'].notna() & (report_issues['image_url'] != "")]
+        
+        images_html = "<div style='display:flex; flex-wrap:wrap; gap:15px; margin-top:20px;'>"
+        if not issues_with_imgs.empty:
+            for i, (_, row) in issues_with_imgs.iterrows():
+                issue_text = str(row['issue_text']).replace('\n', '<br>')
+                images_html += f"""
+                <div style="flex: 0 0 calc(33.333% - 15px); border: 1px solid #ddd; border-radius: 8px; padding: 10px; box-sizing: border-box; background-color: #fff; page-break-inside: avoid;">
+                    <img src="{row['image_url']}" style="width: 100%; height: auto; border-radius: 4px;">
+                    <div style="font-size: 13px; color: #333; margin-top: 10px; line-height: 1.4; word-break: break-all;">
+                        <b>상세 내용:</b><br>{issue_text}
+                    </div>
+                </div>
+                """
+        else:
+            images_html += "<p style='font-size:14px; color:#666;'>첨부된 현장 지적 사진이 없습니다.</p>"
+        images_html += "</div>"
+
+        # 최종 다운로드용 HTML 문자열 조립 (인쇄 버튼 내장)
+        full_export_html = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <title>안전점검결과 보고서 ({doc_data['branch']})</title>
+            <style>
+                @media print {{
+                    .no-print {{ display: none !important; }}
+                    body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+                body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background-color: #fff; color: #333; padding: 30px; max-width: 1000px; margin: auto; }}
+            </style>
+        </head>
+        <body>
+            <div class="no-print" style="text-align: center; margin-bottom: 30px; background-color: #f1f2f6; padding: 20px; border-radius: 8px;">
+                <h3 style="margin-top:0;">출력용 HTML 보고서가 생성되었습니다.</h3>
+                <p>아래 버튼을 누르거나 키보드 <b>Ctrl + P</b>를 눌러 즉시 인쇄(또는 PDF 저장)를 진행하세요.</p>
+                <button onclick="window.print()" style="padding: 12px 24px; font-size: 18px; font-weight: bold; background-color: #2ecc71; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ 보고서 인쇄하기</button>
+            </div>
+            {html_report_body}
+            <div style="text-align: center; margin: 20px 0;">
+                {radar_html}
+            </div>
+            <hr style='border:1px solid #ddd; margin: 30px 0;'>
+            <h4 style='color:#2c3e50;'>📸 현장 지적 사진 및 상세 내역</h4>
+            {images_html}
+        </body>
+        </html>
+        """
+        
+        # 다운로드 버튼 노출
+        st.download_button(
+            label="📥 깔끔한 인쇄용 HTML 내보내기 (클릭하여 저장)",
+            data=full_export_html,
+            file_name=f"안전점검보고서_{doc_data['date']}_{doc_data['branch']}.html",
+            mime="text/html",
+            use_container_width=True,
+            type="primary"
+        )
+        
+        # -------------------------------------------------------------------------
+        # 기존 화면 렌더링 유지 구역
+        # -------------------------------------------------------------------------
+        col_rep1, col_rep2 = st.columns([1.5, 1])
+        with col_rep1:
+            st.markdown(html_report_body, unsafe_allow_html=True)
             
         with col_rep2:
             st.plotly_chart(fig_radar, use_container_width=True)
 
-        # -------------------------------------------------------------------------
-        # [신규 추가] 다중 지적 사진 및 세부 내역 그리드 뷰 (Grid View) 출력
-        # -------------------------------------------------------------------------
         st.markdown("<hr style='border:1px solid #ddd; margin: 30px 0;'>", unsafe_allow_html=True)
         st.markdown("<h4 style='color:#2c3e50;'>📸 현장 지적 사진 및 상세 내역</h4>", unsafe_allow_html=True)
         
         if not df_issues.empty:
-            # 선택된 보고서의 일자, 사업장, 담당자를 기준으로 해당 날짜에 찍힌 모든 지적사항 쿼리
-            report_issues = df_issues[(df_issues['date'] == doc_data['date']) & 
-                                      (df_issues['branch'] == doc_data['branch']) & 
-                                      (df_issues['emp_id'] == doc_data['emp_id'])]
-            
-            # 이미지가 첨부된 데이터만 추출
-            issues_with_imgs = report_issues[report_issues['image_url'].notna() & (report_issues['image_url'] != "")]
-            
             if issues_with_imgs.empty:
                 st.info("첨부된 현장 지적 사진이 없습니다.")
             else:
-                # 3열(Columns) 구조로 반응형 그리드 생성
                 cols = st.columns(3)
                 for i, (_, row) in enumerate(issues_with_imgs.iterrows()):
                     with cols[i % 3]:
-                        # 예쁘게 정돈된 카드 형태의 UI 렌더링
                         st.markdown(f"""
                         <div style="border: 1px solid #eee; border-radius: 8px; padding: 10px; height: 100%; background-color:#fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom:15px;">
                         """, unsafe_allow_html=True)
-                        
-                        # 사진 출력
                         st.image(row['image_url'], use_container_width=True)
-                        
-                        # 지적 항목 및 위반 내용 (Q번호 포함) 텍스트 출력
                         issue_text = str(row['issue_text']).replace('\n', '<br>')
                         st.markdown(f"""
                         <div style='font-size: 13px; color: #333; margin-top: 10px; line-height: 1.4; word-break: break-all;'>
