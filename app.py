@@ -112,11 +112,11 @@ if st.sidebar.button("🚪 로그아웃", use_container_width=True):
 
 st.sidebar.markdown("---")
 
-# 관리자는 대시보드만, 일반 스탭은 실무 메뉴만
+# 관리자는 대시보드만, 일반 스탭은 종합 현황을 포함한 실무 메뉴 노출
 if u_info['role'] == 'admin':
     menu_options = ["📊 PC 경영진 종합 대시보드"]
 else:
-    menu_options = ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "🖨️ 1페이지 요약 PDF 출력"]
+    menu_options = ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"]
 
 menu = st.sidebar.radio("메뉴 선택", menu_options)
 
@@ -238,7 +238,79 @@ elif menu == "🗂️ 내 점검 이력 관리":
                     st.success("삭제 완료! 새로고침 시 리스트에서 사라집니다.")
 
 # -----------------------------------------------------------------------------
-# [메뉴 3] PC 경영진 종합 대시보드
+# [신규 메뉴 3] 📈 현장 담당자 점검현황(종합) (명칭 순화 완료)
+# -----------------------------------------------------------------------------
+elif menu == "📈 현장 담당자 점검현황(종합)":
+    st.title("📈 현장 담당자 점검현황(종합)")
+    st.markdown("전사 담당자들의 안전 활동 현황과 나의 점검 성과를 종합적으로 비교·확인할 수 있는 메뉴입니다.")
+    st.info("🌟 **[주요 지표 안내] 현장의 실질적인 안전 확보를 위해 '지적조치 개선건수'를 가장 중요하게 모니터링하고 있습니다.**")
+    
+    df = pd.DataFrame(supabase.table("safety_evaluation").select("*").execute().data)
+    df_issues = pd.DataFrame(supabase.table("safety_issues").select("*").execute().data)
+    
+    if df.empty:
+        st.warning("분석할 전사 데이터가 아직 충분하지 않습니다.")
+    else:
+        my_id = u_info['emp_id']
+        my_name = u_info['emp_name']
+        
+        # 담당자별 실시간 실적 데이터 집계
+        leaderboard_data = []
+        for emp_id_group, group in df.groupby('emp_id'):
+            inspector_name = group['inspector'].iloc[0]
+            visits = len(group)
+            my_avg_score = round(group['final_score'].mean(), 1)
+            
+            # 해당 담당자의 개선 완료 건수 계산
+            resolved_count = 0
+            if not df_issues.empty:
+                resolved_count = len(df_issues[(df_issues['emp_id'] == emp_id_group) & (df_issues['status'] == '개선완료')])
+                
+            leaderboard_data.append({
+                "사번": emp_id_group, "담당자": inspector_name,
+                "지적조치 개선건수 (★중요)": resolved_count,
+                "총 점검횟수": visits, "담당 사업장 평균점수": my_avg_score
+            })
+            
+        stats_df = pd.DataFrame(leaderboard_data)
+        # 중요도 순으로 정렬 (개선건수 -> 점검횟수 -> 사업장점수)
+        stats_df = stats_df.sort_values(by=["지적조치 개선건수 (★중요)", "총 점검횟수", "담당 사업장 평균점수"], ascending=[False, False, False]).reset_index(drop=True)
+        stats_df['순위'] = stats_df.index + 1
+        
+        # '나'와 '타인(전체 평균)'의 지표 바인딩
+        my_row = stats_df[stats_df['사번'] == my_id]
+        if not my_row.empty:
+            my_rank = my_row['순위'].values[0]
+            my_res = my_row['지적조치 개선건수 (★중요)'].values[0]
+            my_vis = my_row['총 점검횟수'].values[0]
+            my_score = my_row['담당 사업장 평균점수'].values[0]
+            
+            avg_res = round(stats_df['지적조치 개선건수 (★중요)'].mean(), 1)
+            avg_vis = round(stats_df['총 점검횟수'].mean(), 1)
+            avg_score_all = round(stats_df['담당 사업장 평균점수'].mean(), 1)
+            
+            st.markdown(f"### 🦺 **{my_name}님의 안전 성과 종합 현황 (전체 {len(stats_df)}명 중 {my_rank}위)**")
+            
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("🔥 나의 지적조치 개선건수", f"{my_res} 건", delta=f"전체 평균 {avg_res}건 대비 {round(my_res - avg_res, 1)}건")
+            with m2:
+                st.metric("📋 나의 총 점검횟수", f"{my_vis} 회", delta=f"전체 평균 {avg_vis}회 대비 {round(my_vis - avg_vis, 1)}회")
+            with m3:
+                st.metric("⭐ 내 사업장 평균점수", f"{my_score} 점", delta=f"전체 사업장 평균 {avg_score_all}점 대비 {round(my_score - avg_score_all, 1)}점")
+                
+        st.markdown("---")
+        st.markdown("### 📊 전사 현장 담당자 실시간 활동 현황")
+        
+        display_df = stats_df[['순위', '담당자', '지적조치 개선건수 (★중요)', '총 점검횟수', '담당 사업장 평균점수']]
+        st.dataframe(display_df.style.background_gradient(cmap="Oranges", subset=["지적조치 개선건수 (★중요)"]), use_container_width=True)
+        
+        fig_comp = px.bar(stats_df, x="담당자", y="지적조치 개선건수 (★중요)", color="담당 사업장 평균점수", 
+                         title="담당자별 지적조치 개선 성과 시각화", text_auto=True)
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# [메뉴 4] PC 경영진 종합 대시보드
 # -----------------------------------------------------------------------------
 elif menu == "📊 PC 경영진 종합 대시보드":
     st.title("📊 경영진 종합 대시보드 (PC 보고용)")
@@ -250,11 +322,10 @@ elif menu == "📊 PC 경영진 종합 대시보드":
         st.warning("분석할 클라우드 데이터가 없습니다.")
     else:
         tab_main, tab_kpi, tab_capa, tab_feedback = st.tabs([
-            "🌐 전사 종합 모니터링", "🏆 스탭 성과평가(KPI)", "🚨 지적사항(CAPA) 추적 현황", "📝 베타 피드백(VoC)"
+            "🌐 전사 종합 모니터링", "🏆 담당자 성과평가(KPI)", "🚨 지적사항(CAPA) 추적 현황", "📝 베타 피드백(VoC)"
         ])
         
         with tab_main:
-            # 1. 요약 메트릭
             total_avg = round(df['final_score'].mean(), 1)
             above_avg_df = df[df['final_score'] >= total_avg]
             below_avg_df = df[df['final_score'] < total_avg]
@@ -265,7 +336,6 @@ elif menu == "📊 PC 경영진 종합 대시보드":
             kpi3.markdown(f"<div style='background-color:#fdedec; padding:12px; border-radius:6px; border-left:6px solid #e74c3c;'><p style='margin:0; color:#c0392b;'><b>🔴 평균 미달 (취약)</b></p><h2 style='margin:5px 0; color:#111;'>{len(below_avg_df)} 개소</h2></div>", unsafe_allow_html=True)
             st.markdown("---")
 
-            # 2. [추가 완료] 6대 영역 전사 평균 방사형 차트 (경영진 대시보드 메인)
             st.markdown("### 🎯 6대 영역별 전사 평균 안전 준수율")
             s_avgs_dash, s_names_dash = [], list(SECTIONS_MAP.keys())
             for s_name, q_ids in SECTIONS_MAP.items():
@@ -279,7 +349,6 @@ elif menu == "📊 PC 경영진 종합 대시보드":
             st.plotly_chart(fig_radar_dash, use_container_width=True)
             st.markdown("---")
             
-            # 3. 차수별 추이 분석기
             st.markdown("### 🔍 차수별 안전 흐름 추이 분석기")
             if st.checkbox("📈 사업장 방문 차수별 안전 흐름 추이 분석기 켜기", value=False):
                 unique_branches = sorted(df['branch'].unique().tolist())
@@ -296,7 +365,6 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.plotly_chart(fig_trend, use_container_width=True)
                 st.markdown("---")
                 
-            # 4. 전사 랭킹 및 취약 항목 리스트
             col_rank, col_risk = st.columns(2)
             with col_rank:
                 st.markdown("### 🏆 전사 평가 순위")
@@ -350,7 +418,7 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.info("피드백 데이터가 존재하지 않습니다.")
 
 # -----------------------------------------------------------------------------
-# [메뉴 4] 1페이지 요약 및 PDF 출력 (일반 사용자 메뉴)
+# [메뉴 5] 1페이지 요약 및 PDF 출력
 # -----------------------------------------------------------------------------
 elif menu == "🖨️ 1페이지 요약 PDF 출력":
     st.title("🖨️ 안전점검결과 보고서 요약본")
