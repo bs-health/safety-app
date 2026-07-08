@@ -49,7 +49,6 @@ if 'issue_count' not in st.session_state:
 if 'current_step' not in st.session_state:
     st.session_state.current_step = 0
 
-# ★ [핵심 추가] 위젯이 화면에서 사라져도 데이터를 영구히 묶어둘 독립 보존 저장소
 if 'saved_answers' not in st.session_state: st.session_state.saved_answers = {}
 if 'saved_checkboxes' not in st.session_state: st.session_state.saved_checkboxes = {}
 if 'saved_images' not in st.session_state: st.session_state.saved_images = {}
@@ -128,7 +127,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록 (데이터 완벽 보존 아키텍처)
+# [메뉴 1] 모바일 체크리스트 등록
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -165,7 +164,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     st.image(f"images/{q_id}.png", use_container_width=True)
             except: pass
             
-            # [기억 보존 1] 이전에 선택한 이력이 있다면 해당 라디오 버튼 인덱스로 자동 복원
             options_list = list(q["options"].keys())
             default_index = 0
             if q_id in st.session_state.saved_answers:
@@ -174,16 +172,14 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 
             st.radio("배점 항목 선택", options_list, index=default_index, key=f"ans_{q_id}")
             
-            # [기억 보존 2] 체크박스 상태 복원
             default_chk = st.session_state.saved_checkboxes.get(q_id, False)
             issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", value=default_chk, key=f"chk_{q_id}")
             
             if issue_check:
                 st.warning(f"⚠️ Q{q_id:02d} 관련 지적사진 및 내용을 기록합니다.")
                 
-                # 이미 촬영된 스냅샷 증적이 영구저장소에 있다면 화면에 상주 표출
                 if q_id in st.session_state.saved_images and st.session_state.saved_images[q_id] is not None:
-                    st.image(st.session_state.saved_images[q_id], caption="📸 이미 촬영된 증적 사진 (다시 촬영하면 아래 카메라로 교체됩니다)", width=240)
+                    st.image(st.session_state.saved_images[q_id], caption="📸 이미 촬영된 증적 사진 (다시 촬영하면 교체됩니다)", width=240)
                     
                 st.camera_input(f"📸 Q{q_id:02d} 현장 사진", key=f"cam_q_{q_id}")
                 
@@ -191,12 +187,10 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 st.text_area(f"Q{q_id:02d} 지적 상세 내용", value=default_rem, placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
             st.markdown("---")
             
-        # 하단 네비게이션 배치 및 강제 락(Lock) 저장 매커니즘
         col_nav1, col_nav2 = st.columns(2)
         with col_nav1:
             if st.session_state.current_step > 0:
                 if st.button("⬅️ 이전 단계로 이동", use_container_width=True):
-                    # 페이지가 파괴되기 직전 찰나의 순간에 모든 현재 위젯 상태를 영구 저장소에 복사 및 박제
                     for q_id_save in q_ids:
                         st.session_state.saved_answers[q_id_save] = st.session_state[f"ans_{q_id_save}"]
                         st.session_state.saved_checkboxes[q_id_save] = st.session_state[f"chk_{q_id_save}"]
@@ -208,7 +202,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     st.rerun()
         with col_nav2:
             if st.button("다음 단계로 이동 ➡️", use_container_width=True, type="secondary"):
-                # 페이지가 파괴되기 직전 찰나의 순간에 모든 현재 위젯 상태를 영구 저장소에 복사 및 박제
                 for q_id_save in q_ids:
                     st.session_state.saved_answers[q_id_save] = st.session_state[f"ans_{q_id_save}"]
                     st.session_state.saved_checkboxes[q_id_save] = st.session_state[f"chk_{q_id_save}"]
@@ -219,7 +212,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 st.session_state.current_step += 1
                 st.rerun()
 
-    # 7번째 마지막 시트 (최종 지적 및 제출) 처리
+    # 7번째 마지막 시트
     else:
         st.subheader("📸 최종 지적 및 제출 시트")
         st.info("개별 문항 외에 추가로 발생한 현장 지적사항이 있다면 아래에 등록하세요.")
@@ -248,18 +241,15 @@ if menu == "✍️ 모바일 체크리스트 등록":
             if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
                 final_score = 0
                 
-                # 방어적 점수 합산 설계 (영구 저장소인 saved_answers 에서 완벽 매칭 집계)
                 for q_id in range(1, 17):
                     ans_val = st.session_state.saved_answers.get(q_id)
                     if ans_val and ans_val in QUESTIONS[q_id]["options"]:
                         final_score += QUESTIONS[q_id]["options"][ans_val]
                     else:
-                        # 혹시라도 테스터가 들르지 않은 시트가 있다면 첫번째 항목 배점으로 안전 기본 처리
                         first_opt = list(QUESTIONS[q_id]["options"].keys())[0]
                         final_score += QUESTIONS[q_id]["options"][first_opt]
                 
                 all_issues = []
-                # 1. 문항별 저장소 내용 취합
                 for q_id in range(1, 17):
                     if st.session_state.saved_checkboxes.get(q_id, False):
                         cam = st.session_state.saved_images.get(q_id)
@@ -269,7 +259,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                             text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
                             all_issues.append((cam, text_payload))
                 
-                # 2. 추가 지적사항 취합
                 for i, (cam, rem) in enumerate(generic_issues_widgets):
                     if cam or rem:
                         all_issues.append((cam, f"[추가 현장 지적] {rem if rem else '사진 참조'}"))
@@ -277,7 +266,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 combined_remarks = "\n\n".join([text for _, text in all_issues])
                 first_img_url = ""
                 
-                # 고유 해시 파일명 기반 사진 클라우드 업로드
                 for i, (cam, text) in enumerate(all_issues):
                     img_url = ""
                     if cam:
@@ -301,7 +289,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                         "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
                     }).execute()
 
-                # 메인 마스터 테이블에 안전하게 최종 집계 점수 적재 (0점 현상 원천 차단)
                 eval_data = {
                     "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
                     "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
@@ -317,7 +304,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                         
                 supabase.table("safety_evaluation").insert(eval_data).execute()
                 
-                # 완전 초기화 후 메인 리런
                 st.session_state.issue_count = 1
                 st.session_state.current_step = 0
                 st.session_state.saved_answers = {}
@@ -488,11 +474,15 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.dataframe(df[df['feedback'].notna() & (df['feedback'] != "")][['date', 'inspector', 'branch', 'feedback']], use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# [메뉴 5] 1페이지 요약 및 PDF 출력
+# [메뉴 5] 1페이지 요약 및 PDF 출력 (★다중 사진 및 지적항목 명시 UI 고도화 반영)
 # -----------------------------------------------------------------------------
 elif menu == "🖨️ 1페이지 요약 PDF 출력":
     st.title("🖨️ 안전점검결과 보고서 요약본")
+    
+    # 평가 마스터 및 지적사항 데이터를 동시에 호출
     df = pd.DataFrame(supabase.table("safety_evaluation").select("*").execute().data)
+    df_issues = pd.DataFrame(supabase.table("safety_issues").select("*").execute().data)
+    
     if df.empty:
         st.warning("출력할 데이터가 없습니다.")
     else:
@@ -531,12 +521,49 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
 <div style="flex: 1; border: 1px solid #2ecc71; padding: 12px; border-radius: 6px; background-color: #e8f8f5;"><h5 style="margin: 0 0 8px 0; color: #16a085;">🟢 우수 안전 항목</h5><p style="font-size: 12px; margin:0;">{"<br>".join(good_items) if good_items else "없음"}</p></div>
 <div style="flex: 1; border: 1px solid #e74c3c; padding: 12px; border-radius: 6px; background-color: #fdedec;"><h5 style="margin: 0 0 8px 0; color: #c0392b;">🔴 취약 항목</h5><p style="font-size: 12px; margin:0;">{"<br>".join(bad_items) if bad_items else "없음"}</p></div>
 </div>
-<h5 style="margin: 15px 0 5px 0;">📌 지적 및 조치요구사항 종합</h5>
-<div style="border: 1px solid #333; padding: 12px; font-size: 13px; white-space: pre-wrap; background-color: #fafafa;">{doc_data['remarks'] if doc_data['remarks'] else '특이사항 없음.'}</div>
 </div>
 """, unsafe_allow_html=True)
             
         with col_rep2:
             st.plotly_chart(fig_radar, use_container_width=True)
-            if doc_data.get('image_path') and doc_data['image_path'].startswith("http"):
-                st.image(doc_data['image_path'], caption="대표 현장 지적 사진", use_container_width=True)
+
+        # -------------------------------------------------------------------------
+        # [신규 추가] 다중 지적 사진 및 세부 내역 그리드 뷰 (Grid View) 출력
+        # -------------------------------------------------------------------------
+        st.markdown("<hr style='border:1px solid #ddd; margin: 30px 0;'>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#2c3e50;'>📸 현장 지적 사진 및 상세 내역</h4>", unsafe_allow_html=True)
+        
+        if not df_issues.empty:
+            # 선택된 보고서의 일자, 사업장, 담당자를 기준으로 해당 날짜에 찍힌 모든 지적사항 쿼리
+            report_issues = df_issues[(df_issues['date'] == doc_data['date']) & 
+                                      (df_issues['branch'] == doc_data['branch']) & 
+                                      (df_issues['emp_id'] == doc_data['emp_id'])]
+            
+            # 이미지가 첨부된 데이터만 추출
+            issues_with_imgs = report_issues[report_issues['image_url'].notna() & (report_issues['image_url'] != "")]
+            
+            if issues_with_imgs.empty:
+                st.info("첨부된 현장 지적 사진이 없습니다.")
+            else:
+                # 3열(Columns) 구조로 반응형 그리드 생성
+                cols = st.columns(3)
+                for i, (_, row) in enumerate(issues_with_imgs.iterrows()):
+                    with cols[i % 3]:
+                        # 예쁘게 정돈된 카드 형태의 UI 렌더링
+                        st.markdown(f"""
+                        <div style="border: 1px solid #eee; border-radius: 8px; padding: 10px; height: 100%; background-color:#fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom:15px;">
+                        """, unsafe_allow_html=True)
+                        
+                        # 사진 출력
+                        st.image(row['image_url'], use_container_width=True)
+                        
+                        # 지적 항목 및 위반 내용 (Q번호 포함) 텍스트 출력
+                        issue_text = str(row['issue_text']).replace('\n', '<br>')
+                        st.markdown(f"""
+                        <div style='font-size: 13px; color: #333; margin-top: 10px; line-height: 1.4; word-break: break-all;'>
+                        <b>상세 내용:</b><br>{issue_text}
+                        </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+        else:
+            st.info("지적사항 데이터베이스 내역이 없습니다.")
