@@ -37,7 +37,7 @@ def init_connection():
 supabase = init_connection()
 
 # -----------------------------------------------------------------------------
-# [인증 & 세션 관리] 로그인 및 시트(단계) 동기화 상태 락(Lock)
+# [인증 & 세션 관리] 로그인 및 데이터 영구 보존용 독립 저장소 초기화
 # -----------------------------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -46,9 +46,14 @@ if 'logged_in' not in st.session_state:
 if 'issue_count' not in st.session_state:
     st.session_state.issue_count = 1
 
-# [100% 작동 보장] 백엔드가 직접 현재 페이지 번호를 기억하는 핵심 세션 엔진
 if 'current_step' not in st.session_state:
     st.session_state.current_step = 0
+
+# ★ [핵심 추가] 위젯이 화면에서 사라져도 데이터를 영구히 묶어둘 독립 보존 저장소
+if 'saved_answers' not in st.session_state: st.session_state.saved_answers = {}
+if 'saved_checkboxes' not in st.session_state: st.session_state.saved_checkboxes = {}
+if 'saved_images' not in st.session_state: st.session_state.saved_images = {}
+if 'saved_remarks' not in st.session_state: st.session_state.saved_remarks = {}
 
 if not st.session_state.logged_in:
     st.markdown("<h2 style='text-align: center; margin-top:50px;'>🦺 안전보건 통합 점검 시스템</h2>", unsafe_allow_html=True)
@@ -123,7 +128,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록 (파이썬 세션기반 완전 무결 작동 버전)
+# [메뉴 1] 모바일 체크리스트 등록 (데이터 완벽 보존 아키텍처)
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -139,7 +144,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
     
     steps_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출"]
     
-    # [직관성 업그레이드] 현재 어떤 시트(단계)에 와 있는지 상태 진행 바 표시
     status_text = " ➡️ ".join([f"**[{name}]**" if i == st.session_state.current_step else name for i, name in enumerate(steps_names)])
     st.markdown(f"▶️ 현재 진행 상태: {status_text}")
     st.markdown("---")
@@ -161,20 +165,59 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     st.image(f"images/{q_id}.png", use_container_width=True)
             except: pass
             
-            # 중요: 모든 점수 컴포넌트는 전역 고유 키를 가지며 세션 상태에 실시간 영구 자동 세이브됩니다.
-            st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
+            # [기억 보존 1] 이전에 선택한 이력이 있다면 해당 라디오 버튼 인덱스로 자동 복원
+            options_list = list(q["options"].keys())
+            default_index = 0
+            if q_id in st.session_state.saved_answers:
+                prev_ans = st.session_state.saved_answers[q_id]
+                if prev_ans in options_list: default_index = options_list.index(prev_ans)
+                
+            st.radio("배점 항목 선택", options_list, index=default_index, key=f"ans_{q_id}")
             
-            issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", key=f"chk_{q_id}")
+            # [기억 보존 2] 체크박스 상태 복원
+            default_chk = st.session_state.saved_checkboxes.get(q_id, False)
+            issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", value=default_chk, key=f"chk_{q_id}")
+            
             if issue_check:
                 st.warning(f"⚠️ Q{q_id:02d} 관련 지적사진 및 내용을 기록합니다.")
+                
+                # 이미 촬영된 스냅샷 증적이 영구저장소에 있다면 화면에 상주 표출
+                if q_id in st.session_state.saved_images and st.session_state.saved_images[q_id] is not None:
+                    st.image(st.session_state.saved_images[q_id], caption="📸 이미 촬영된 증적 사진 (다시 촬영하면 아래 카메라로 교체됩니다)", width=240)
+                    
                 st.camera_input(f"📸 Q{q_id:02d} 현장 사진", key=f"cam_q_{q_id}")
-                st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
+                
+                default_rem = st.session_state.saved_remarks.get(q_id, "")
+                st.text_area(f"Q{q_id:02d} 지적 상세 내용", value=default_rem, placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
             st.markdown("---")
             
-        # [100% 에러 해결] 백엔드가 직접 숫자를 올려 리런시키는 완전 무결 '다음 단계' 버튼
-        if st.button("다음 단계로 이동 ➡️", use_container_width=True, type="secondary"):
-            st.session_state.current_step += 1
-            st.rerun()
+        # 하단 네비게이션 배치 및 강제 락(Lock) 저장 매커니즘
+        col_nav1, col_nav2 = st.columns(2)
+        with col_nav1:
+            if st.session_state.current_step > 0:
+                if st.button("⬅️ 이전 단계로 이동", use_container_width=True):
+                    # 페이지가 파괴되기 직전 찰나의 순간에 모든 현재 위젯 상태를 영구 저장소에 복사 및 박제
+                    for q_id_save in q_ids:
+                        st.session_state.saved_answers[q_id_save] = st.session_state[f"ans_{q_id_save}"]
+                        st.session_state.saved_checkboxes[q_id_save] = st.session_state[f"chk_{q_id_save}"]
+                        if st.session_state[f"chk_{q_id_save}"]:
+                            new_cam = st.session_state.get(f"cam_q_{q_id_save}")
+                            if new_cam is not None: st.session_state.saved_images[q_id_save] = new_cam
+                            st.session_state.saved_remarks[q_id_save] = st.session_state.get(f"rem_q_{q_id_save}", "")
+                    st.session_state.current_step -= 1
+                    st.rerun()
+        with col_nav2:
+            if st.button("다음 단계로 이동 ➡️", use_container_width=True, type="secondary"):
+                # 페이지가 파괴되기 직전 찰나의 순간에 모든 현재 위젯 상태를 영구 저장소에 복사 및 박제
+                for q_id_save in q_ids:
+                    st.session_state.saved_answers[q_id_save] = st.session_state[f"ans_{q_id_save}"]
+                    st.session_state.saved_checkboxes[q_id_save] = st.session_state[f"chk_{q_id_save}"]
+                    if st.session_state[f"chk_{q_id_save}"]:
+                        new_cam = st.session_state.get(f"cam_q_{q_id_save}")
+                        if new_cam is not None: st.session_state.saved_images[q_id_save] = new_cam
+                        st.session_state.saved_remarks[q_id_save] = st.session_state.get(f"rem_q_{q_id_save}", "")
+                st.session_state.current_step += 1
+                st.rerun()
 
     # 7번째 마지막 시트 (최종 지적 및 제출) 처리
     else:
@@ -205,23 +248,28 @@ if menu == "✍️ 모바일 체크리스트 등록":
             if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
                 final_score = 0
                 
-                # 안전한 누적 점수 강제 집계 로직
+                # 방어적 점수 합산 설계 (영구 저장소인 saved_answers 에서 완벽 매칭 집계)
                 for q_id in range(1, 17):
-                    ans_key = f"ans_{q_id}"
-                    if ans_key in st.session_state:
-                        chosen_ans = st.session_state[ans_key]
-                        final_score += QUESTIONS[q_id]["options"][chosen_ans]
+                    ans_val = st.session_state.saved_answers.get(q_id)
+                    if ans_val and ans_val in QUESTIONS[q_id]["options"]:
+                        final_score += QUESTIONS[q_id]["options"][ans_val]
+                    else:
+                        # 혹시라도 테스터가 들르지 않은 시트가 있다면 첫번째 항목 배점으로 안전 기본 처리
+                        first_opt = list(QUESTIONS[q_id]["options"].keys())[0]
+                        final_score += QUESTIONS[q_id]["options"][first_opt]
                 
                 all_issues = []
+                # 1. 문항별 저장소 내용 취합
                 for q_id in range(1, 17):
-                    if st.session_state.get(f"chk_{q_id}"):
-                        cam = st.session_state.get(f"cam_q_{q_id}")
-                        rem = st.session_state.get(f"rem_q_{q_id}")
-                        ans_val = st.session_state.get(f"ans_{q_id}", "").split('.')[0]
+                    if st.session_state.saved_checkboxes.get(q_id, False):
+                        cam = st.session_state.saved_images.get(q_id)
+                        rem = st.session_state.saved_remarks.get(q_id, "")
+                        ans_val = st.session_state.saved_answers.get(q_id, "미선택").split('.')[0]
                         if cam or rem:
                             text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
                             all_issues.append((cam, text_payload))
                 
+                # 2. 추가 지적사항 취합
                 for i, (cam, rem) in enumerate(generic_issues_widgets):
                     if cam or rem:
                         all_issues.append((cam, f"[추가 현장 지적] {rem if rem else '사진 참조'}"))
@@ -229,7 +277,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 combined_remarks = "\n\n".join([text for _, text in all_issues])
                 first_img_url = ""
                 
-                # 사진 압축 업로드 실행
+                # 고유 해시 파일명 기반 사진 클라우드 업로드
                 for i, (cam, text) in enumerate(all_issues):
                     img_url = ""
                     if cam:
@@ -253,21 +301,29 @@ if menu == "✍️ 모바일 체크리스트 등록":
                         "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
                     }).execute()
 
-                # 점검 마스터 테이블 최종 반영
+                # 메인 마스터 테이블에 안전하게 최종 집계 점수 적재 (0점 현상 원천 차단)
                 eval_data = {
                     "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
                     "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
                     "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
                 }
                 for i in range(1, 17):
-                    ans_val = st.session_state.get(f"ans_{i}")
-                    eval_data[f"q{i}"] = QUESTIONS[i]["options"][ans_val] if ans_val else 0
-                    
+                    ans_val = st.session_state.saved_answers.get(i)
+                    if ans_val and ans_val in QUESTIONS[i]["options"]:
+                        eval_data[f"q{i}"] = QUESTIONS[i]["options"][ans_val]
+                    else:
+                        first_opt = list(QUESTIONS[i]["options"].keys())[0]
+                        eval_data[f"q{i}"] = QUESTIONS[i]["options"][first_opt]
+                        
                 supabase.table("safety_evaluation").insert(eval_data).execute()
                 
-                # 완료 후 상태 초기화
+                # 완전 초기화 후 메인 리런
                 st.session_state.issue_count = 1
                 st.session_state.current_step = 0
+                st.session_state.saved_answers = {}
+                st.session_state.saved_checkboxes = {}
+                st.session_state.saved_images = {}
+                st.session_state.saved_remarks = {}
                 st.success(f"🎉 성공! 종합점수 **{final_score}점**으로 점검 데이터 및 지적사항이 클라우드 서버에 등록되었습니다!")
                 st.rerun()
 
