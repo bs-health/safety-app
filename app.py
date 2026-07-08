@@ -120,7 +120,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록 (데이터 보존형 아키텍처)
+# [메뉴 1] 모바일 체크리스트 등록 (탭 보완 최적화 아키텍처)
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -134,7 +134,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
     with col_hc: headcount = st.number_input("인원수(명)", min_value=0, step=1)
     st.markdown("---")
     
-    # [데이터 유실 방지] 모든 시트를 DOM에 렌더링하는 Native Tabs 복구
     tabs_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출"]
     tabs = st.tabs(tabs_names)
     
@@ -150,7 +149,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                         st.image(f"images/{q_id}.png", use_container_width=True)
                 except: pass
                 
-                # 라디오 값은 Streamlit의 session_state에 안전하게 누적됩니다.
                 st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
                 
                 issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", key=f"chk_{q_id}")
@@ -160,17 +158,24 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 내용 기록...", key=f"rem_q_{q_id}")
                 st.markdown("---")
             
-            # [자동화 마법사] 브라우저 DOM을 제어하여 다음 탭으로 강제 이동시키는 JS 인젝션
+            # [요청 2 보완 완벽 해결] Streamlit 버전업에 따른 신형 탭 추적 자바스크립트 주입
+            # data-baseweb, role, class 명칭에 상관없이 '상단 탭 버튼 목록'을 강제 스캔하여 완벽 동기화 터치
             st.components.v1.html(f"""
             <script>
             function nextTab() {{
-                const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+                const p = window.parent.document;
+                // 속성, 역할, 클래스 등 모든 패턴의 탭 엘리먼트를 스캔합니다.
+                let tabs = p.querySelectorAll('button[data-baseweb="tab"], button[role="tab"], .stTabs button');
+                if (!tabs || tabs.length === 0) {{
+                    // 최악의 경우 일반 버튼 중 텍스트가 일치하는 탭 탐색
+                    tabs = Array.from(p.querySelectorAll('button')).filter(b => b.id && b.id.includes('tab'));
+                }}
                 if (tabs && tabs.length > {idx} + 1) {{
                     tabs[{idx} + 1].click();
                 }}
             }}
             </script>
-            <button onclick="nextTab()" style="width:100%; padding:14px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <button onclick="nextTab()" style="width:100%; padding:14px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); font-family:sans-serif;">
                 다음 시트로 이동 ➡️
             </button>
             """, height=70)
@@ -191,11 +196,9 @@ if menu == "✍️ 모바일 체크리스트 등록":
             
         beta_feedback = st.text_area("앱 개선 의견 피드백", key="beta_feed")
         
-        # [핵심 로직 복구] 누락 없는 완벽한 점수 집계 알고리즘
         if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
             final_score = 0
             
-            # 1. 점수 강제 합산 로직
             for q_id in range(1, 17):
                 ans_key = f"ans_{q_id}"
                 if ans_key in st.session_state:
@@ -203,7 +206,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     final_score += QUESTIONS[q_id]["options"][chosen_ans]
             
             all_issues = []
-            # 2. 문항별 지적사항 취합
             for q_id in range(1, 17):
                 if st.session_state.get(f"chk_{q_id}"):
                     cam = st.session_state.get(f"cam_q_{q_id}")
@@ -213,7 +215,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                         text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
                         all_issues.append((cam, text_payload))
             
-            # 3. 추가 지적사항 취합
             for i in range(st.session_state.issue_count):
                 cam = st.session_state.get(f"gen_cam_{i}")
                 rem = st.session_state.get(f"gen_rem_{i}")
@@ -223,7 +224,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             combined_remarks = "\n\n".join([text for _, text in all_issues])
             first_img_url = ""
             
-            # 4. 고유 난수(UUID) 기반 압축 사진 업로드
             for i, (cam, text) in enumerate(all_issues):
                 img_url = ""
                 if cam:
@@ -247,7 +247,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
                 }).execute()
 
-            # 5. 메인 DB 점수 및 응답 적재 (0점 에러 원천 차단)
             eval_data = {
                 "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
                 "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
