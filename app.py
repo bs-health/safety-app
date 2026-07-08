@@ -30,6 +30,10 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_info = None
 
+# 지적사항 갯수를 기억하는 세션 변수 초기화
+if 'issue_count' not in st.session_state:
+    st.session_state.issue_count = 1
+
 if not st.session_state.logged_in:
     st.markdown("<h2 style='text-align: center; margin-top:50px;'>🦺 안전보건 통합 점검 시스템 (Beta)</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #666;'>부여받은 사번과 PIN 번호로 로그인해 주세요.<br>(※ 테스트용 계정: 사번 admin / PIN 0000 또는 사번 1001 / PIN 0000)</p>", unsafe_allow_html=True)
@@ -60,7 +64,7 @@ def generate_ai_summary(text):
     return " ".join(words[:5]) + "... (AI 임시 요약)"
 
 # -----------------------------------------------------------------------------
-# [기준 데이터] 전체 문항 마스터 (상세 설명 및 배점 복구 완료)
+# [기준 데이터] 전체 문항 마스터
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_reference_data():
@@ -142,7 +146,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
     st.markdown("---")
     tabs = st.tabs(list(SECTIONS_MAP.keys()) + ["📸 현장지적(17)", "📝 테스트 피드백(18)"])
     
-    # [복구 완료] 문항별 세부 설명(tip), 이미지, 배점 라디오 버튼 세로 출력 로직
+    # 문항별 세부 설명(tip), 이미지, 배점 라디오 버튼 출력
     answers = {}
     for idx, (sect, q_ids) in enumerate(SECTIONS_MAP.items()):
         with tabs[idx]:
@@ -159,10 +163,21 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 answers[q_id] = st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
                 st.markdown("---")
                 
-    with tabs[-2]: # 항목 17 (카메라 강제)
+    # 항목 17 (다중 지적사항 동적 추가 기능)
+    with tabs[-2]:
         st.info("🚨 갤러리 사진 업로드는 차단되었습니다. 현장에서 실시간으로 촬영해 주세요.")
-        cam_photo = st.camera_input("📸 현장 증적 사진 촬영")
-        remarks = st.text_area("지적사항 상세 기록", placeholder="여기에 작성하신 내용은 AI가 자동으로 요약하여 추적 시스템에 등록합니다.")
+        
+        issues_data = []
+        for i in range(st.session_state.issue_count):
+            st.markdown(f"#### 📌 [{i+1}번째 지적사항]")
+            cam_photo = st.camera_input(f"📸 {i+1}번 현장 지적 사진 촬영", key=f"cam_{i}")
+            remarks = st.text_area(f"{i+1}번 지적사항 상세 기록", key=f"rem_{i}", placeholder="여기에 작성하신 내용은 AI가 자동으로 요약하여 추적 시스템에 등록합니다.")
+            issues_data.append((cam_photo, remarks))
+            st.markdown("---")
+            
+        if st.button("➕ 지적사항 한 건 더 추가하기", use_container_width=True):
+            st.session_state.issue_count += 1
+            st.rerun()
         
     with tabs[-1]: # 항목 18 (베타 테스트 전용 피드백)
         st.success("💡 [베타 테스트 의견 수렴] 앱 사용 중 불편했던 점이나 추가 요청사항을 자유롭게 적어주세요.")
@@ -170,37 +185,46 @@ if menu == "✍️ 모바일 체크리스트 등록":
             
     if st.button("📋 최종 평가 제출하기", use_container_width=True):
         final_score = sum([QUESTIONS[q_id]["options"][ans] for q_id, ans in answers.items()])
-        public_img_url = ""
         
-        # 이미지 압축 및 업로드
-        if cam_photo is not None:
-            image = Image.open(cam_photo)
-            if image.mode in ("RGBA", "P"): image = image.convert("RGB")
-            image.thumbnail((800, 800), Image.Resampling.LANCZOS)
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
-            file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_cam.jpg"
-            supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
-            public_img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
+        # 전체 지적사항을 하나로 묶기 (메인 테이블 저장용)
+        combined_remarks = "\n".join([f"[{i+1}] {rem}" for i, (cam, rem) in enumerate(issues_data) if rem])
+        first_img_url = ""
         
+        # 지적사항 개별 처리 및 스토리지 업로드
+        for i, (cam, rem) in enumerate(issues_data):
+            if cam or rem:
+                img_url = ""
+                if cam:
+                    image = Image.open(cam)
+                    if image.mode in ("RGBA", "P"): image = image.convert("RGB")
+                    image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                    img_byte_arr = io.BytesIO()
+                    image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
+                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue{i}.jpg"
+                    supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
+                    img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
+                    
+                    if not first_img_url: 
+                        first_img_url = img_url # 메인 테이블에 보여줄 대표 사진 설정
+                
+                # 지적사항(CAPA) 추적 테이블에 개별 행으로 등록
+                ai_sum = generate_ai_summary(rem) if rem else "사진만 등록됨"
+                issue_data = {
+                    "emp_id": u_info['emp_id'], "branch": branch, "date": inspect_date.strftime("%Y-%m-%d"),
+                    "issue_text": rem, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치"
+                }
+                supabase.table("safety_issues").insert(issue_data).execute()
+
         # 메인 점검 데이터 DB 등록
         eval_data = {
             "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
             "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
             **{f"q{i}": QUESTIONS[i]["options"][answers[i]] for i in range(1, 17)},
-            "remarks": remarks, "image_path": public_img_url, "final_score": float(final_score), "feedback": beta_feedback
+            "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
         }
         supabase.table("safety_evaluation").insert(eval_data).execute()
         
-        # 지적사항(CAPA) 추적 테이블 등록
-        if remarks:
-            ai_sum = generate_ai_summary(remarks)
-            issue_data = {
-                "emp_id": u_info['emp_id'], "branch": branch, "date": inspect_date.strftime("%Y-%m-%d"),
-                "issue_text": remarks, "ai_summary": ai_sum, "image_url": public_img_url, "status": "미조치"
-            }
-            supabase.table("safety_issues").insert(issue_data).execute()
-            
+        st.session_state.issue_count = 1 # 제출 완료 후 지적사항 입력칸 수 초기화
         st.success("🎉 점검 기록 및 지적사항이 성공적으로 서버에 등록되었습니다!")
 
 # -----------------------------------------------------------------------------
@@ -219,7 +243,7 @@ elif menu == "🗂️ 내 점검 이력 관리":
         df_my = df_my.sort_values(by='date', ascending=False)
         for idx, row in df_my.iterrows():
             with st.expander(f"📍 {row['date']} | {row['branch']} (종합점수: {row['final_score']}점)"):
-                st.write(f"**지적사항:** {row['remarks'] if row['remarks'] else '없음'}")
+                st.write(f"**지적사항:**\n{row['remarks'] if row['remarks'] else '없음'}")
                 if st.button(f"🗑️ 이 점검기록 영구 삭제", key=f"del_{row['id']}"):
                     supabase.table("safety_evaluation").delete().eq("id", row['id']).execute()
                     st.success("삭제 완료! 다른 메뉴로 이동했다 돌아오면 목록에서 사라집니다.")
@@ -290,12 +314,12 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         <tr style="background-color: #f2f2f2;"><td style="border: 1px solid #333; padding: 8px; font-weight: bold;">사업장명</td><td style="border: 1px solid #333; padding: 8px;">{doc['branch']}</td><td style="border: 1px solid #333; padding: 8px; font-weight: bold;">점검자</td><td style="border: 1px solid #333; padding: 8px;">{doc['inspector']}</td></tr>
         <tr style="background-color: #f2f2f2;"><td style="border: 1px solid #333; padding: 8px; font-weight: bold;">점검일자</td><td style="border: 1px solid #333; padding: 8px;">{doc['date']}</td><td style="border: 1px solid #333; padding: 8px; font-weight: bold;">종합점수</td><td style="border: 1px solid #333; padding: 8px; color:#c0392b; font-weight:bold;">{int(doc['final_score'])} 점</td></tr>
         </table>
-        <h5 style="margin: 15px 0 5px 0;">📌 현장 지적사항 및 조치 (AI 요약)</h5>
-        <div style="border: 1px solid #333; padding: 12px; font-size: 13px; white-space: pre-wrap; background-color: #fafafa;">원본: {doc['remarks'] if doc['remarks'] else '특이사항 없음.'}</div>
+        <h5 style="margin: 15px 0 5px 0;">📌 현장 지적사항 종합</h5>
+        <div style="border: 1px solid #333; padding: 12px; font-size: 13px; white-space: pre-wrap; background-color: #fafafa;">{doc['remarks'] if doc['remarks'] else '특이사항 없음.'}</div>
         </div>
         """
         col1, col2 = st.columns([1.5, 1])
         with col1: st.markdown(html_report, unsafe_allow_html=True)
         with col2: 
             if doc.get('image_path') and doc['image_path'].startswith("http"):
-                st.image(doc['image_path'], caption="현장 증적 사진", use_container_width=True)
+                st.image(doc['image_path'], caption="대표 현장 지적 사진", use_container_width=True)
