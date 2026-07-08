@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import io
+import uuid  # 파일명 충돌 방지용 난수 생성 라이브러리 추가
 from PIL import Image
 import plotly.express as px
 import plotly.graph_objects as ob
@@ -147,7 +148,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
     answers = {}
     current_tab_name = tabs_names[st.session_state.active_tab]
     
-    # 1~6번째 평가 문항 시트(탭) 처리
     if current_tab_name in SECTIONS_MAP:
         q_ids = SECTIONS_MAP[current_tab_name]
         st.subheader(f"📂 현재 시트: {current_tab_name}")
@@ -157,7 +157,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             st.markdown(f"**Q{q_id:02d}. {q['title']}**")
             st.caption(f"💡 팁: {q['tip']}")
             
-            # 가이드 샘플 이미지는 고해상도 유지 및 컨테이너 너비 맞춤 적용
             try:
                 if os.path.exists(f"images/{q_id}.png"):
                     st.image(f"images/{q_id}.png", use_container_width=True)
@@ -176,7 +175,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             st.session_state.active_tab += 1
             st.rerun()
 
-    # 7번째 마지막 시트 (최종 지적 및 제출) 처리
     else:
         st.subheader("📸 최종 지적 및 제출 시트")
         st.info("개별 문항 외에 추가로 발생한 현장 지적사항이 있다면 아래에 등록하세요.")
@@ -222,8 +220,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
             combined_remarks = "\n\n".join([text for _, text in all_issues])
             first_img_url = ""
             
-            # [핵심 수정] 서버 용량 방어를 위해 지적사진은 800x800 해상도 및 품질 70%로 압축 
-            # 추가적으로 x-upsert 설정을 부여하여 StorageApiError를 방지
+            # [오류 해결 완벽 조치] UUID 난수를 활용하여 파일명 100% 충돌 방지 (x-upsert 에러 원천 차단)
             for i, (cam, text) in enumerate(all_issues):
                 img_url = ""
                 if cam:
@@ -234,13 +231,15 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     img_byte_arr = io.BytesIO()
                     image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
                     
-                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue_{i}.jpg"
+                    # 마이크로초 + UUID 조합으로 절대 겹치지 않는 안전한 파일명 생성
+                    unique_hash = str(uuid.uuid4().hex)[:6]
+                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{unique_hash}_issue.jpg"
                     
-                    # x-upsert 파라미터를 추가하여 덮어쓰기 권한 에러 해결
+                    # 덮어쓰기(upsert) 속성 제거 후 깔끔하게 순수 업로드
                     supabase.storage.from_("safety_images").upload(
                         file_name, 
                         img_byte_arr.getvalue(), 
-                        {"content-type": "image/jpeg", "x-upsert": "true"}
+                        {"content-type": "image/jpeg"}
                     )
                     
                     img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
