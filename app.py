@@ -9,9 +9,26 @@ import plotly.graph_objects as ob
 from supabase import create_client, Client
 
 # -----------------------------------------------------------------------------
-# [설정] 페이지 기본 구성 및 Supabase 클라우드 연동
+# [설정] 페이지 기본 구성, 반응형 CSS 주입 및 Supabase 연동
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="안전보건 통합 자가진단 (Beta)", page_icon="🦺", layout="wide")
+
+# [요청 3 해결] 모바일 줄바꿈 방지 및 반응형 폰트 CSS 주입
+st.markdown("""
+<style>
+    h1, h2, h3 {
+        word-break: keep-all !important;
+        white-space: nowrap !important;
+    }
+    @media (max-width: 768px) {
+        h1 { font-size: 1.6rem !important; }
+        h2 { font-size: 1.3rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        /* 탭 폰트 크기 모바일 최적화 */
+        button[data-baseweb="tab"] { font-size: 0.85rem !important; }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 @st.cache_resource
 def init_connection():
@@ -34,8 +51,8 @@ if 'issue_count' not in st.session_state:
     st.session_state.issue_count = 1
 
 if not st.session_state.logged_in:
-    st.markdown("<h2 style='text-align: center; margin-top:50px;'>🦺 안전보건 통합 점검 시스템 (Beta)</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #666;'>부여받은 사번과 PIN 번호로 로그인해 주세요.<br>(※ 테스트용 계정: 사번 admin / PIN 0000 또는 사번 1001 / PIN 0000)</p>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-top:50px;'>🦺 안전보건 통합 점검 시스템</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #666;'>부여받은 사번과 PIN 번호로 로그인해 주세요.</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
@@ -55,16 +72,12 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# [도구] AI 자동 요약 가상 함수
+# [도구] AI 요약 함수 및 DB 데이터
 # -----------------------------------------------------------------------------
 def generate_ai_summary(text):
     if not text or len(text) < 5: return "요약 불가(내용 부족)"
-    words = text.split()
-    return " ".join(words[:5]) + "... (AI 자동 요약)"
+    return " ".join(text.split()[:5]) + "... (AI 자동 요약)"
 
-# -----------------------------------------------------------------------------
-# [기준 데이터] 전체 문항 마스터
-# -----------------------------------------------------------------------------
 @st.cache_data
 def load_reference_data():
     try:
@@ -100,7 +113,7 @@ QUESTIONS = {
 SECTIONS_MAP = {"서류": [1, 2, 4], "위험성평가": [3], "비상대응": [5], "교육훈련": [6, 7, 8, 9, 10, 11], "현장위험": [12, 13], "보건관리": [14, 15, 16]}
 
 # -----------------------------------------------------------------------------
-# [사이드바] 권한별 메뉴 분리
+# [사이드바] 권한 분리
 # -----------------------------------------------------------------------------
 u_info = st.session_state.user_info
 st.sidebar.markdown(f"### 👤 {u_info['emp_name']} 님 환영합니다.")
@@ -109,15 +122,12 @@ st.sidebar.caption(f"권한: {'경영진(Admin)' if u_info['role'] == 'admin' el
 if st.sidebar.button("🚪 로그아웃", use_container_width=True):
     st.session_state.logged_in = False
     st.rerun()
-
 st.sidebar.markdown("---")
 
-# 관리자는 대시보드만, 일반 스탭은 종합 현황을 포함한 실무 메뉴 노출
 if u_info['role'] == 'admin':
     menu_options = ["📊 PC 경영진 종합 대시보드"]
 else:
     menu_options = ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"]
-
 menu = st.sidebar.radio("메뉴 선택", menu_options)
 
 # -----------------------------------------------------------------------------
@@ -136,19 +146,23 @@ if menu == "✍️ 모바일 체크리스트 등록":
     
     unresolved = supabase.table("safety_issues").select("*").eq("branch", branch).eq("status", "미조치").execute()
     if unresolved.data:
-        st.error("🚨 **[주의] 과거 방문 시 미조치된 지적사항이 남아있습니다. 현장에서 개선 여부를 확인해 주세요!**")
+        st.error("🚨 **[주의] 과거 방문 시 미조치된 지적사항이 남아있습니다. 현장 확인 바랍니다!**")
         for issue in unresolved.data:
             with st.expander(f"📌 {issue['date']} 지적건: {issue['ai_summary']}"):
                 st.write(f"**상세내용:** {issue['issue_text']}")
                 if issue.get('image_url'): st.image(issue['image_url'], width=200)
                 if st.button(f"✅ 현장 개선 확인 및 조치 완료 처리", key=f"resolve_{issue['id']}"):
                     supabase.table("safety_issues").update({"status": "개선완료"}).eq("id", issue['id']).execute()
-                    st.success("개선 완료 처리되었습니다! 새로고침 시 목록에서 사라집니다.")
-    
+                    st.success("개선 완료 처리되었습니다!")
     st.markdown("---")
-    tabs = st.tabs(list(SECTIONS_MAP.keys()) + ["📸 현장지적(17)", "📝 테스트 피드백(18)"])
+    
+    # [요청 1 설계] 18번 피드백을 17번(제출 탭)으로 통합하여 총 7개 탭 구성
+    tabs_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출(17)"]
+    tabs = st.tabs(tabs_names)
     
     answers = {}
+    item_issues_widgets = {} # 각 문항별 지적사항 위젯 데이터 저장용
+    
     for idx, (sect, q_ids) in enumerate(SECTIONS_MAP.items()):
         with tabs[idx]:
             for q_id in q_ids:
@@ -156,37 +170,77 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 st.markdown(f"**Q{q_id:02d}. {q['title']}**")
                 st.caption(f"💡 팁: {q['tip']}")
                 try:
-                    if os.path.exists(f"images/{q_id}.png"): 
-                        st.image(f"images/{q_id}.png", width=280)
+                    if os.path.exists(f"images/{q_id}.png"): st.image(f"images/{q_id}.png", width=280)
                 except: pass
+                
                 answers[q_id] = st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
+                
+                # [요청 2 설계] 문항별 개별 지적사항 촬영 기능 추가
+                issue_check = st.checkbox(f"⚠️ 이 항목(Q{q_id})에서 지적사항 발생 시 체크", key=f"chk_{q_id}")
+                if issue_check:
+                    st.warning(f"**Q{q_id:02d} 관련 위반 사항을 기록합니다.**")
+                    cam = st.camera_input(f"📸 Q{q_id:02d} 현장 사진", key=f"cam_q_{q_id}")
+                    rem = st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="위반 현황 및 조치 요구사항을 입력하세요.", key=f"rem_q_{q_id}")
+                    item_issues_widgets[q_id] = (cam, rem)
+                    
                 st.markdown("---")
                 
-    with tabs[-2]:
-        st.info("🚨 갤러리 사진 업로드는 차단되었습니다. 현장에서 실시간으로 촬영해 주세요.")
-        issues_data = []
+            # [요청 1 설계] 앞선 6개 시트에는 JS 강제 스와이프를 지원하는 '다음' 버튼 부착
+            st.components.v1.html(f"""
+            <script>
+            function nextTab() {{
+                const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"], button[role="tab"]');
+                if (tabs.length > {idx} + 1) {{ tabs[{idx} + 1].click(); }}
+            }}
+            </script>
+            <button onclick="nextTab()" style="width:100%; padding:12px; background-color:#ff4b4b; color:white; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                다음 시트로 넘어가기 ➡️
+            </button>
+            """, height=60)
+            
+    # [요청 1 설계] 제출 버튼은 오직 마지막 7번째 탭에만 존재함
+    with tabs[-1]:
+        st.info("🚨 위 문항(1~16번) 외에, **기타 추가적인 현장 지적사항**이 있다면 아래에 등록해주세요.")
+        generic_issues_widgets = []
         for i in range(st.session_state.issue_count):
-            st.markdown(f"#### 📌 [{i+1}번째 지적사항]")
-            cam_photo = st.camera_input(f"📸 {i+1}번 현장 지적 사진 촬영", key=f"cam_{i}")
-            remarks = st.text_area(f"{i+1}번 지적사항 상세 기록", key=f"rem_{i}", placeholder="여기에 작성하신 내용은 AI가 자동으로 요약하여 추적 시스템에 등록합니다.")
-            issues_data.append((cam_photo, remarks))
+            st.markdown(f"#### 📌 [추가 현장 지적 {i+1}]")
+            cam = st.camera_input(f"📸 추가 현장 사진 {i+1}", key=f"gen_cam_{i}")
+            rem = st.text_area(f"추가 지적사항 {i+1} 상세 내용", key=f"gen_rem_{i}")
+            generic_issues_widgets.append((cam, rem))
             st.markdown("---")
             
         if st.button("➕ 지적사항 한 건 더 추가하기", use_container_width=True):
             st.session_state.issue_count += 1
             st.rerun()
-        
-    with tabs[-1]:
-        st.success("💡 [베타 테스트 의견 수렴] 앱 사용 중 불편했던 점이나 추가 요청사항을 자유롭게 적어주세요.")
-        beta_feedback = st.text_area("개선 의견 작성", placeholder="예: 카메라 기능이 너무 느려요, 항목 12번 문구가 이해하기 어려워요 등")
             
-    if st.button("📋 최종 평가 제출하기", use_container_width=True):
-        final_score = sum([QUESTIONS[q_id]["options"][ans] for q_id, ans in answers.items()])
-        combined_remarks = "\n".join([f"[{i+1}] {rem}" for i, (cam, rem) in enumerate(issues_data) if rem])
-        first_img_url = ""
+        st.markdown("### 📝 최종 피드백")
+        beta_feedback = st.text_area("앱 사용 중 불편했던 점이나 개선 의견을 자유롭게 적어주세요.", key="beta_feed")
+        st.markdown("---")
         
-        for i, (cam, rem) in enumerate(issues_data):
-            if cam or rem:
+        # 제출 버튼
+        if st.button("📋 최종 평가 제출하기", use_container_width=True, type="primary"):
+            final_score = sum([QUESTIONS[q_id]["options"][ans] for q_id, ans in answers.items()])
+            all_issues = []
+            
+            # 1. 항목별 지적사항 병합 (요청 2 연동)
+            for q_id, (cam, rem) in item_issues_widgets.items():
+                if cam or rem:
+                    ans_val = answers[q_id].split('.')[0]
+                    q_title = QUESTIONS[q_id]['title']
+                    issue_text = f"[Q{q_id:02d} 지적] {q_title}\n- 선택내역: {ans_val}\n- 상세설명: {rem if rem else '사진만 등록됨'}"
+                    all_issues.append((cam, issue_text))
+                    
+            # 2. 일반 지적사항 병합
+            for i, (cam, rem) in enumerate(generic_issues_widgets):
+                if cam or rem:
+                    issue_text = f"[항목 외 추가 지적 {i+1}] {rem if rem else '사진만 등록됨'}"
+                    all_issues.append((cam, issue_text))
+                    
+            combined_remarks = "\n\n".join([text for _, text in all_issues])
+            first_img_url = ""
+            
+            # 클라우드 이미지 업로드 및 개별 지적사항(CAPA) DB 인서트
+            for i, (cam, text) in enumerate(all_issues):
                 img_url = ""
                 if cam:
                     image = Image.open(cam)
@@ -194,34 +248,36 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     image.thumbnail((800, 800), Image.Resampling.LANCZOS)
                     img_byte_arr = io.BytesIO()
                     image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
-                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue{i}.jpg"
+                    file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue_{i}.jpg"
                     supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
                     img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
                     if not first_img_url: first_img_url = img_url
                 
-                ai_sum = generate_ai_summary(rem) if rem else "사진만 등록됨"
+                ai_sum = generate_ai_summary(text)
                 issue_data = {
                     "emp_id": u_info['emp_id'], "branch": branch, "date": inspect_date.strftime("%Y-%m-%d"),
-                    "issue_text": rem, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
+                    "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
                 }
                 supabase.table("safety_issues").insert(issue_data).execute()
 
-        eval_data = {
-            "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
-            "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
-            **{f"q{i}": QUESTIONS[i]["options"][answers[i]] for i in range(1, 17)},
-            "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
-        }
-        supabase.table("safety_evaluation").insert(eval_data).execute()
-        st.session_state.issue_count = 1
-        st.success("🎉 점검 기록 및 지적사항이 성공적으로 서버에 등록되었습니다!")
+            # 메인 종합 점검표 DB 인서트
+            eval_data = {
+                "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
+                "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
+                **{f"q{i}": QUESTIONS[i]["options"][answers[i]] for i in range(1, 17)},
+                "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
+            }
+            supabase.table("safety_evaluation").insert(eval_data).execute()
+            
+            st.session_state.issue_count = 1
+            st.success("🎉 점검 기록 및 모든 지적사항이 성공적으로 서버에 등록되었습니다!")
 
 # -----------------------------------------------------------------------------
-# [메뉴 2] 내 점검 이력 관리
+# [메뉴 2] 내 점검 이력 관리 (지적 현황 자동 표시 연동됨)
 # -----------------------------------------------------------------------------
 elif menu == "🗂️ 내 점검 이력 관리":
     st.title("🗂️ 나의 누적 점검 이력")
-    st.markdown("본인이 등록한 내역만 표시되며, 기한 제한 없이 자유롭게 수정 및 삭제가 가능합니다.")
+    st.markdown("본인이 등록한 내역만 표시되며, 개별 문항에서 등록한 지적사항도 아래 종합 기록에 표기됩니다.")
     
     res = supabase.table("safety_evaluation").select("*").eq("emp_id", u_info['emp_id']).execute()
     df_my = pd.DataFrame(res.data)
@@ -232,13 +288,13 @@ elif menu == "🗂️ 내 점검 이력 관리":
         df_my = df_my.sort_values(by='date', ascending=False)
         for idx, row in df_my.iterrows():
             with st.expander(f"📍 {row['date']} | {row['branch']} (종합점수: {row['final_score']}점)"):
-                st.write(f"**지적사항 종합:**\n{row['remarks'] if row['remarks'] else '없음'}")
+                st.markdown(f"**지적사항 종합 내역:**\n```text\n{row['remarks'] if row['remarks'] else '지적사항 없음'}\n```")
                 if st.button(f"🗑️ 이 점검기록 영구 삭제", key=f"del_{row['id']}"):
                     supabase.table("safety_evaluation").delete().eq("id", row['id']).execute()
                     st.success("삭제 완료! 새로고침 시 리스트에서 사라집니다.")
 
 # -----------------------------------------------------------------------------
-# [신규 메뉴 3] 📈 현장 담당자 점검현황(종합) (명칭 순화 완료)
+# [메뉴 3] 현장 담당자 점검현황(종합)
 # -----------------------------------------------------------------------------
 elif menu == "📈 현장 담당자 점검현황(종합)":
     st.title("📈 현장 담당자 점검현황(종합)")
@@ -254,14 +310,12 @@ elif menu == "📈 현장 담당자 점검현황(종합)":
         my_id = u_info['emp_id']
         my_name = u_info['emp_name']
         
-        # 담당자별 실시간 실적 데이터 집계
         leaderboard_data = []
         for emp_id_group, group in df.groupby('emp_id'):
             inspector_name = group['inspector'].iloc[0]
             visits = len(group)
             my_avg_score = round(group['final_score'].mean(), 1)
             
-            # 해당 담당자의 개선 완료 건수 계산
             resolved_count = 0
             if not df_issues.empty:
                 resolved_count = len(df_issues[(df_issues['emp_id'] == emp_id_group) & (df_issues['status'] == '개선완료')])
@@ -273,11 +327,9 @@ elif menu == "📈 현장 담당자 점검현황(종합)":
             })
             
         stats_df = pd.DataFrame(leaderboard_data)
-        # 중요도 순으로 정렬 (개선건수 -> 점검횟수 -> 사업장점수)
         stats_df = stats_df.sort_values(by=["지적조치 개선건수 (★중요)", "총 점검횟수", "담당 사업장 평균점수"], ascending=[False, False, False]).reset_index(drop=True)
         stats_df['순위'] = stats_df.index + 1
         
-        # '나'와 '타인(전체 평균)'의 지표 바인딩
         my_row = stats_df[stats_df['사번'] == my_id]
         if not my_row.empty:
             my_rank = my_row['순위'].values[0]
@@ -292,12 +344,9 @@ elif menu == "📈 현장 담당자 점검현황(종합)":
             st.markdown(f"### 🦺 **{my_name}님의 안전 성과 종합 현황 (전체 {len(stats_df)}명 중 {my_rank}위)**")
             
             m1, m2, m3 = st.columns(3)
-            with m1:
-                st.metric("🔥 나의 지적조치 개선건수", f"{my_res} 건", delta=f"전체 평균 {avg_res}건 대비 {round(my_res - avg_res, 1)}건")
-            with m2:
-                st.metric("📋 나의 총 점검횟수", f"{my_vis} 회", delta=f"전체 평균 {avg_vis}회 대비 {round(my_vis - avg_vis, 1)}회")
-            with m3:
-                st.metric("⭐ 내 사업장 평균점수", f"{my_score} 점", delta=f"전체 사업장 평균 {avg_score_all}점 대비 {round(my_score - avg_score_all, 1)}점")
+            with m1: st.metric("🔥 나의 지적조치 개선건수", f"{my_res} 건", delta=f"전체 평균 {avg_res}건 대비 {round(my_res - avg_res, 1)}건")
+            with m2: st.metric("📋 나의 총 점검횟수", f"{my_vis} 회", delta=f"전체 평균 {avg_vis}회 대비 {round(my_vis - avg_vis, 1)}회")
+            with m3: st.metric("⭐ 내 사업장 평균점수", f"{my_score} 점", delta=f"전체 사업장 평균 {avg_score_all}점 대비 {round(my_score - avg_score_all, 1)}점")
                 
         st.markdown("---")
         st.markdown("### 📊 전사 현장 담당자 실시간 활동 현황")
@@ -305,8 +354,7 @@ elif menu == "📈 현장 담당자 점검현황(종합)":
         display_df = stats_df[['순위', '담당자', '지적조치 개선건수 (★중요)', '총 점검횟수', '담당 사업장 평균점수']]
         st.dataframe(display_df.style.background_gradient(cmap="Oranges", subset=["지적조치 개선건수 (★중요)"]), use_container_width=True)
         
-        fig_comp = px.bar(stats_df, x="담당자", y="지적조치 개선건수 (★중요)", color="담당 사업장 평균점수", 
-                         title="담당자별 지적조치 개선 성과 시각화", text_auto=True)
+        fig_comp = px.bar(stats_df, x="담당자", y="지적조치 개선건수 (★중요)", color="담당 사업장 평균점수", title="담당자별 지적조치 개선 성과 시각화", text_auto=True)
         st.plotly_chart(fig_comp, use_container_width=True)
 
 # -----------------------------------------------------------------------------
@@ -321,9 +369,7 @@ elif menu == "📊 PC 경영진 종합 대시보드":
     if df.empty:
         st.warning("분석할 클라우드 데이터가 없습니다.")
     else:
-        tab_main, tab_kpi, tab_capa, tab_feedback = st.tabs([
-            "🌐 전사 종합 모니터링", "🏆 담당자 성과평가(KPI)", "🚨 지적사항(CAPA) 추적 현황", "📝 베타 피드백(VoC)"
-        ])
+        tab_main, tab_kpi, tab_capa, tab_feedback = st.tabs(["🌐 전사 종합 모니터링", "🏆 담당자 성과평가(KPI)", "🚨 지적사항(CAPA) 추적 현황", "📝 베타 피드백(VoC)"])
         
         with tab_main:
             total_avg = round(df['final_score'].mean(), 1)
@@ -392,9 +438,6 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 
             kpi_df = pd.DataFrame(kpi_data).sort_values(by="위험제거율(%)", ascending=False).reset_index(drop=True)
             st.dataframe(kpi_df.style.background_gradient(cmap="Blues", subset=["위험제거율(%)"]), use_container_width=True)
-            
-            fig_kpi = px.bar(kpi_df, x="담당자", y="위험제거율(%)", color="방문횟수", title="담당자별 성과 지표", height=400)
-            st.plotly_chart(fig_kpi, use_container_width=True)
             
         with tab_capa:
             st.markdown("### 🔍 전사 사업장 미조치 현황판")
