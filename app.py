@@ -24,7 +24,7 @@ def init_connection():
 supabase = init_connection()
 
 # -----------------------------------------------------------------------------
-# [인증] 세션 관리 및 사번 로그인 (방안 B)
+# [인증] 세션 관리 및 사번 로그인
 # -----------------------------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -100,7 +100,7 @@ QUESTIONS = {
 SECTIONS_MAP = {"서류": [1, 2, 4], "위험성평가": [3], "비상대응": [5], "교육훈련": [6, 7, 8, 9, 10, 11], "현장위험": [12, 13], "보건관리": [14, 15, 16]}
 
 # -----------------------------------------------------------------------------
-# [사이드바] 네비게이션 제어 (권한별 메뉴 완벽 분리)
+# [사이드바] 권한별 메뉴 분리
 # -----------------------------------------------------------------------------
 u_info = st.session_state.user_info
 st.sidebar.markdown(f"### 👤 {u_info['emp_name']} 님 환영합니다.")
@@ -112,7 +112,7 @@ if st.sidebar.button("🚪 로그아웃", use_container_width=True):
 
 st.sidebar.markdown("---")
 
-# 관리자는 대시보드만, 일반 스탭은 실무 메뉴만 보이도록 분리
+# 관리자는 대시보드만, 일반 스탭은 실무 메뉴만
 if u_info['role'] == 'admin':
     menu_options = ["📊 PC 경영진 종합 대시보드"]
 else:
@@ -155,18 +155,15 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 q = QUESTIONS[q_id]
                 st.markdown(f"**Q{q_id:02d}. {q['title']}**")
                 st.caption(f"💡 팁: {q['tip']}")
-                
                 try:
                     if os.path.exists(f"images/{q_id}.png"): 
                         st.image(f"images/{q_id}.png", width=280)
                 except: pass
-                
                 answers[q_id] = st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
                 st.markdown("---")
                 
     with tabs[-2]:
         st.info("🚨 갤러리 사진 업로드는 차단되었습니다. 현장에서 실시간으로 촬영해 주세요.")
-        
         issues_data = []
         for i in range(st.session_state.issue_count):
             st.markdown(f"#### 📌 [{i+1}번째 지적사항]")
@@ -185,7 +182,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             
     if st.button("📋 최종 평가 제출하기", use_container_width=True):
         final_score = sum([QUESTIONS[q_id]["options"][ans] for q_id, ans in answers.items()])
-        
         combined_remarks = "\n".join([f"[{i+1}] {rem}" for i, (cam, rem) in enumerate(issues_data) if rem])
         first_img_url = ""
         
@@ -201,9 +197,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue{i}.jpg"
                     supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
                     img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
-                    
-                    if not first_img_url: 
-                        first_img_url = img_url
+                    if not first_img_url: first_img_url = img_url
                 
                 ai_sum = generate_ai_summary(rem) if rem else "사진만 등록됨"
                 issue_data = {
@@ -219,7 +213,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             "remarks": combined_remarks, "image_path": first_img_url, "final_score": float(final_score), "feedback": beta_feedback
         }
         supabase.table("safety_evaluation").insert(eval_data).execute()
-        
         st.session_state.issue_count = 1
         st.success("🎉 점검 기록 및 지적사항이 성공적으로 서버에 등록되었습니다!")
 
@@ -261,6 +254,7 @@ elif menu == "📊 PC 경영진 종합 대시보드":
         ])
         
         with tab_main:
+            # 1. 요약 메트릭
             total_avg = round(df['final_score'].mean(), 1)
             above_avg_df = df[df['final_score'] >= total_avg]
             below_avg_df = df[df['final_score'] < total_avg]
@@ -270,7 +264,22 @@ elif menu == "📊 PC 경영진 종합 대시보드":
             kpi2.markdown(f"<div style='background-color:#e8f8f5; padding:12px; border-radius:6px; border-left:6px solid #2ecc71;'><p style='margin:0; color:#16a085;'><b>🟢 평균 이상 (우수)</b></p><h2 style='margin:5px 0; color:#111;'>{len(above_avg_df)} 개소</h2></div>", unsafe_allow_html=True)
             kpi3.markdown(f"<div style='background-color:#fdedec; padding:12px; border-radius:6px; border-left:6px solid #e74c3c;'><p style='margin:0; color:#c0392b;'><b>🔴 평균 미달 (취약)</b></p><h2 style='margin:5px 0; color:#111;'>{len(below_avg_df)} 개소</h2></div>", unsafe_allow_html=True)
             st.markdown("---")
+
+            # 2. [추가 완료] 6대 영역 전사 평균 방사형 차트 (경영진 대시보드 메인)
+            st.markdown("### 🎯 6대 영역별 전사 평균 안전 준수율")
+            s_avgs_dash, s_names_dash = [], list(SECTIONS_MAP.keys())
+            for s_name, q_ids in SECTIONS_MAP.items():
+                s_max = sum([max(QUESTIONS[qid]["options"].values()) for qid in q_ids])
+                avg_score = sum([df[f'q{qid}'].mean() for qid in q_ids])
+                s_avgs_dash.append(round((avg_score / s_max) * 100, 1) if s_max else 0)
+
+            fig_radar_dash = ob.Figure()
+            fig_radar_dash.add_trace(ob.Scatterpolar(r=s_avgs_dash, theta=s_names_dash, fill='toself', name='전사 평균 준수율(%)', line=dict(color='#3498db')))
+            fig_radar_dash.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), template="plotly_white", height=450)
+            st.plotly_chart(fig_radar_dash, use_container_width=True)
+            st.markdown("---")
             
+            # 3. 차수별 추이 분석기
             st.markdown("### 🔍 차수별 안전 흐름 추이 분석기")
             if st.checkbox("📈 사업장 방문 차수별 안전 흐름 추이 분석기 켜기", value=False):
                 unique_branches = sorted(df['branch'].unique().tolist())
@@ -287,23 +296,22 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.plotly_chart(fig_trend, use_container_width=True)
                 st.markdown("---")
                 
-            st.markdown("### 🏆 전사 평가 순위")
-            rank_df = df.sort_values(by="final_score", ascending=False)[['date', 'company', 'branch', 'final_score', 'inspector']]
-            st.dataframe(rank_df, use_container_width=True)
-            st.markdown("---")
+            # 4. 전사 랭킹 및 취약 항목 리스트
+            col_rank, col_risk = st.columns(2)
+            with col_rank:
+                st.markdown("### 🏆 전사 평가 순위")
+                rank_df = df.sort_values(by="final_score", ascending=False)[['branch', 'final_score', 'inspector', 'date']]
+                st.dataframe(rank_df, use_container_width=True)
             
-            st.markdown("### 🚨 리스크 진단: 전사 항목별 안전 규칙 준수율")
-            q_cols = [f'q{i}' for i in range(1, 17)]
-            q_avg = df[q_cols].mean()
-            q_perf = {QUESTIONS[int(col[1:])]["title"]: round((q_avg[col] / max(QUESTIONS[int(col[1:])]["options"].values())) * 100, 1) for col in q_cols}
-            perf_df = pd.DataFrame(list(q_perf.items()), columns=['항목', '준수율(%)']).sort_values(by='준수율(%)')
-            
-            fig_large = px.bar(perf_df, x='준수율(%)', y='항목', orientation='h', color='준수율(%)', color_continuous_scale=['#c0392b', '#e74c3c', '#f39c12', '#2ecc71', '#1abc9c'], range_color=[0, 100], height=500)
-            st.plotly_chart(fig_large, use_container_width=True)
-            
-            alert_cols = st.columns(3)
-            for idx, (_, row) in enumerate(perf_df.head(3).iterrows()):
-                alert_cols[idx].error(f"**취약 {idx+1}위 : {row['항목']}** (준수율 **{row['준수율(%)']}%**)")
+            with col_risk:
+                st.markdown("### 🚨 리스크 진단: 취약 항목 TOP 5")
+                q_cols = [f'q{i}' for i in range(1, 17)]
+                q_avg = df[q_cols].mean()
+                q_perf = {QUESTIONS[int(col[1:])]["title"]: round((q_avg[col] / max(QUESTIONS[int(col[1:])]["options"].values())) * 100, 1) for col in q_cols}
+                perf_df = pd.DataFrame(list(q_perf.items()), columns=['항목', '준수율(%)']).sort_values(by='준수율(%)')
+                
+                for idx, (_, row) in enumerate(perf_df.head(5).iterrows()):
+                    st.error(f"**취약 {idx+1}위 : {row['항목']}** (전사 준수율: **{row['준수율(%)']}%**)")
 
         with tab_kpi:
             st.markdown("### 🎯 담당자별 방문 성실도 및 현장 위험 제거율")
@@ -342,7 +350,7 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.info("피드백 데이터가 존재하지 않습니다.")
 
 # -----------------------------------------------------------------------------
-# [메뉴 4] 1페이지 요약 및 PDF 출력
+# [메뉴 4] 1페이지 요약 및 PDF 출력 (일반 사용자 메뉴)
 # -----------------------------------------------------------------------------
 elif menu == "🖨️ 1페이지 요약 PDF 출력":
     st.title("🖨️ 안전점검결과 보고서 요약본")
