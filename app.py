@@ -472,7 +472,7 @@ elif menu == "📊 PC 경영진 종합 대시보드":
                 st.dataframe(df[df['feedback'].notna() & (df['feedback'] != "")][['date', 'inspector', 'branch', 'feedback']], use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# [메뉴 5] 1페이지 요약 및 PDF 출력 (HTML 내보내기 버튼 추가 완벽 연동)
+# [메뉴 5] 1페이지 요약 및 PDF 출력 (★완벽 오류 수정 및 HTML 내보내기 기능 탑재)
 # -----------------------------------------------------------------------------
 elif menu == "🖨️ 1페이지 요약 PDF 출력":
     st.title("🖨️ 안전점검결과 보고서 요약본")
@@ -506,7 +506,7 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), template="plotly_white", height=380)
         
         # -------------------------------------------------------------------------
-        # [신규 기능] HTML 파일 렌더링 및 내보내기 버튼 로직 생성
+        # [수정] 다운로드용 HTML 문자열 생성 부
         # -------------------------------------------------------------------------
         html_report_body = f"""
 <div style="border: 2px solid #333; padding: 20px; font-family: sans-serif; background-color:#fff; color:#111; border-radius: 8px;">
@@ -531,7 +531,7 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         
         images_html = "<div style='display:flex; flex-wrap:wrap; gap:15px; margin-top:20px;'>"
         if not issues_with_imgs.empty:
-            for i, (_, row) in issues_with_imgs.iterrows():
+            for _, row in issues_with_imgs.iterrows(): # ★ ValueError 완벽 수정 구역 ★
                 issue_text = str(row['issue_text']).replace('\n', '<br>')
                 images_html += f"""
                 <div style="flex: 0 0 calc(33.333% - 15px); border: 1px solid #ddd; border-radius: 8px; padding: 10px; box-sizing: border-box; background-color: #fff; page-break-inside: avoid;">
@@ -545,7 +545,6 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
             images_html += "<p style='font-size:14px; color:#666;'>첨부된 현장 지적 사진이 없습니다.</p>"
         images_html += "</div>"
 
-        # 최종 다운로드용 HTML 문자열 조립 (인쇄 버튼 내장)
         full_export_html = f"""
         <!DOCTYPE html>
         <html lang="ko">
@@ -577,7 +576,6 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         </html>
         """
         
-        # 다운로드 버튼 노출
         st.download_button(
             label="📥 깔끔한 인쇄용 HTML 내보내기 (클릭하여 저장)",
             data=full_export_html,
@@ -588,7 +586,7 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
         )
         
         # -------------------------------------------------------------------------
-        # 기존 화면 렌더링 유지 구역
+        # 화면 렌더링 유지 구역 (에러 방지 완벽 처리)
         # -------------------------------------------------------------------------
         col_rep1, col_rep2 = st.columns([1.5, 1])
         with col_rep1:
@@ -605,6 +603,7 @@ elif menu == "🖨️ 1페이지 요약 PDF 출력":
                 st.info("첨부된 현장 지적 사진이 없습니다.")
             else:
                 cols = st.columns(3)
+                # ★ 반복문 에러 방지를 위한 완벽 호환 문법 적용
                 for i, (_, row) in enumerate(issues_with_imgs.iterrows()):
                     with cols[i % 3]:
                         st.markdown(f"""
