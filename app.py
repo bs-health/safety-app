@@ -125,7 +125,7 @@ else:
     menu = st.sidebar.radio("메뉴 선택", ["✍️ 모바일 체크리스트 등록", "🗂️ 내 점검 이력 관리", "📈 현장 담당자 점검현황(종합)", "🖨️ 1페이지 요약 PDF 출력"])
 
 # -----------------------------------------------------------------------------
-# [메뉴 1] 모바일 체크리스트 등록 (시트 자동제어 및 고해상도 샘플 가이드 반영)
+# [메뉴 1] 모바일 체크리스트 등록
 # -----------------------------------------------------------------------------
 if menu == "✍️ 모바일 체크리스트 등록":
     st.title("📋 안전보건 자가진단")
@@ -141,7 +141,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
     
     tabs_names = list(SECTIONS_MAP.keys()) + ["📸 최종 지적 및 제출"]
     
-    # 세션 연동 점검 시트 바로가기 버튼 인터페이스
     chosen_tab = st.radio("점검 시트 바로가기", range(len(tabs_names)), format_func=lambda x: tabs_names[x], index=st.session_state.active_tab, horizontal=True)
     st.session_state.active_tab = chosen_tab
     
@@ -158,7 +157,7 @@ if menu == "✍️ 모바일 체크리스트 등록":
             st.markdown(f"**Q{q_id:02d}. {q['title']}**")
             st.caption(f"💡 팁: {q['tip']}")
             
-            # [요청 3 해결] 고해상도 샘플 이미지가 뭉개지지 않도록 컨테이너 크기에 맞춰 선명하게 출력
+            # 가이드 샘플 이미지는 고해상도 유지 및 컨테이너 너비 맞춤 적용
             try:
                 if os.path.exists(f"images/{q_id}.png"):
                     st.image(f"images/{q_id}.png", use_container_width=True)
@@ -166,7 +165,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
             
             answers[q_id] = st.radio("배점 항목 선택", list(q["options"].keys()), key=f"ans_{q_id}")
             
-            # [요청 1 해결] 명칭을 '📸 지적사항 사진촬영'으로 깔끔하게 변경
             issue_check = st.checkbox(f"📸 지적사항 사진촬영 (Q{q_id:02d})", key=f"chk_{q_id}")
             if issue_check:
                 st.warning(f"⚠️ Q{q_id:02d} 관련 지적사진 및 내용을 기록합니다.")
@@ -174,7 +172,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                 st.text_area(f"Q{q_id:02d} 지적 상세 내용", placeholder="여기에 기입한 위반 내용이 내 점검이력과 지적현황판에 그대로 표기됩니다.", key=f"rem_q_{q_id}")
             st.markdown("---")
             
-        # [요청 2 해결] 다음 단추 클릭 시 정확하게 세션을 조작하여 다음 시트로 이동
         if st.button("다음 단계로 이동 ➡️", use_container_width=True, type="secondary"):
             st.session_state.active_tab += 1
             st.rerun()
@@ -209,18 +206,15 @@ if menu == "✍️ 모바일 체크리스트 등록":
                             final_score += QUESTIONS[q_id]["options"][chosen_ans]
             
             all_issues = []
-            # 1. 항목별 개별 지적사항 데이터 자동 바인딩 (요청 2 반영)
             for q_id in range(1, 17):
                 if st.session_state.get(f"chk_{q_id}"):
                     cam = st.session_state.get(f"cam_q_{q_id}")
                     rem = st.session_state.get(f"rem_q_{q_id}")
                     ans_val = st.session_state.get(f"ans_{q_id}", "").split('.')[0]
                     if cam or rem:
-                        # 질문에 클릭한 내용(배점 문구)이 지적현황에 명확하게 들어가도록 텍스트 조합
                         text_payload = f"[Q{q_id:02d}. {QUESTIONS[q_id]['title']}]\n- 점검결과: {ans_val}\n- 조치요구: {rem if rem else '사진 참조'}"
                         all_issues.append((cam, text_payload))
             
-            # 2. 추가 범용 지적사항 취합
             for i, (cam, rem) in enumerate(generic_issues_widgets):
                 if cam or rem:
                     all_issues.append((cam, f"[추가 현장 지적] {rem if rem else '사진 참조'}"))
@@ -228,19 +222,27 @@ if menu == "✍️ 모바일 체크리스트 등록":
             combined_remarks = "\n\n".join([text for _, text in all_issues])
             first_img_url = ""
             
-            # [요청 1 해결] 지적사진 파일은 서버 용량 방어를 위해 기존 사양대로 압축 (800x800, 품질 70)
+            # [핵심 수정] 서버 용량 방어를 위해 지적사진은 800x800 해상도 및 품질 70%로 압축 
+            # 추가적으로 x-upsert 설정을 부여하여 StorageApiError를 방지
             for i, (cam, text) in enumerate(all_issues):
                 img_url = ""
                 if cam:
                     image = Image.open(cam)
                     if image.mode in ("RGBA", "P"): image = image.convert("RGB")
                     
-                    image.thumbnail((800, 800), Image.Resampling.LANCZOS) # 800 크기 압축 유지
+                    image.thumbnail((800, 800), Image.Resampling.LANCZOS)
                     img_byte_arr = io.BytesIO()
-                    image.save(img_byte_arr, format='JPEG', optimize=True, quality=70) # 품질 70% 압축 유지
+                    image.save(img_byte_arr, format='JPEG', optimize=True, quality=70)
                     
                     file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{branch}_issue_{i}.jpg"
-                    supabase.storage.from_("safety_images").upload(file_name, img_byte_arr.getvalue(), {"content-type": "image/jpeg"})
+                    
+                    # x-upsert 파라미터를 추가하여 덮어쓰기 권한 에러 해결
+                    supabase.storage.from_("safety_images").upload(
+                        file_name, 
+                        img_byte_arr.getvalue(), 
+                        {"content-type": "image/jpeg", "x-upsert": "true"}
+                    )
+                    
                     img_url = supabase.storage.from_("safety_images").get_public_url(file_name)
                     if not first_img_url: first_img_url = img_url
                 
@@ -250,7 +252,6 @@ if menu == "✍️ 모바일 체크리스트 등록":
                     "issue_text": text, "ai_summary": ai_sum, "image_url": img_url, "status": "미조치", "inspector": u_info['emp_name']
                 }).execute()
 
-            # 메인 점검마스터 원본 테이블 적재
             eval_data = {
                 "emp_id": u_info['emp_id'], "date": inspect_date.strftime("%Y-%m-%d"), 
                 "company": selected_company, "branch": branch, "headcount": headcount, "inspector": u_info['emp_name'],
